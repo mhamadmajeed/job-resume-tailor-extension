@@ -5,27 +5,35 @@ const saveState = document.querySelector('#saveState');
 const jobState = document.querySelector('#jobState');
 const downloadOriginal = document.querySelector('#downloadOriginal');
 const generatedState = document.querySelector('#generatedState');
-const apiKey = document.querySelector('#apiKey');
-const saveApiKey = document.querySelector('#saveApiKey');
-const clearApiKey = document.querySelector('#clearApiKey');
-const aiState = document.querySelector('#aiState');
 const resumeDraft = document.querySelector('#resumeDraft');
 const downloadPdf = document.querySelector('#downloadPdf');
 const downloadDocx = document.querySelector('#downloadDocx');
+const accountState = document.querySelector('#accountState');
+const signedOutPanel = document.querySelector('#signedOutPanel');
+const signedInContent = document.querySelector('#signedInContent');
+const signInButton = document.querySelector('#signInButton');
+const signInState = document.querySelector('#signInState');
+const quotaState = document.querySelector('#quotaState');
+const upgradeButton = document.querySelector('#upgradeButton');
+const chatLog = document.querySelector('#chatLog');
+const chatInput = document.querySelector('#chatInput');
+const chatSend = document.querySelector('#chatSend');
 
 let currentResumeText = '';
 let currentGeneratedResume = null;
 let currentOriginalResume = null;
-let currentGeminiApiKey = '';
+let currentAuthToken = '';
+let currentQuota = null;
+let pollTimer = null;
 
 function setBusy(isBusy) {
   analyzeJob.disabled = isBusy || !currentResumeText;
   clearResume.disabled = isBusy;
   downloadOriginal.disabled = isBusy || !currentOriginalResume;
-  saveApiKey.disabled = isBusy;
-  clearApiKey.disabled = isBusy;
   downloadPdf.disabled = isBusy || !resumeDraft.value.trim();
   downloadDocx.disabled = isBusy || !resumeDraft.value.trim();
+  chatSend.disabled = isBusy || !currentGeneratedResume;
+  chatInput.disabled = isBusy || !currentGeneratedResume;
 }
 
 function extractJobTitle(jobText, pageTitle) {
@@ -40,197 +48,113 @@ function isSectionHeading(line) {
   return /^[A-Z][A-Z\s/&+-]{2,}$/.test(trimmed) || /^(summary|profile|objective|skills|technical skills|core skills|experience|work experience|professional experience|education|projects)$/i.test(trimmed);
 }
 
-function findSection(lines, names) {
-  const start = lines.findIndex((line) => names.some((name) => line.trim().toLowerCase() === name));
-  if (start === -1) return null;
-
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (isSectionHeading(lines[index])) {
-      end = index;
-      break;
-    }
-  }
-
-  return { start, end };
-}
-
-function extractJsonObject(text) {
-  const trimmed = text.trim();
-  try {
-    return JSON.parse(trimmed);
-  } catch (_error) {
-    const match = trimmed.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('AI response was not valid JSON.');
-    return JSON.parse(match[0]);
-  }
-}
-
-function buildAiTailoringPrompt(resume, job) {
-  return [
-    [
-      'You are an expert resume strategist and ATS-aware editor.',
-      'Study the full job listing before editing. Infer the role type, seniority, core responsibilities, required qualifications, preferred qualifications, tools/platforms, soft skills, and employer priorities.',
-      'Then match the resume to that role by emphasizing the candidate experience that is already supported by the original resume.',
-      'Do not extract, list, or paste keywords. Do not keyword-stuff. Rewrite naturally so the resume reads as if it was originally written for this target role.',
-      'Preserve the candidate resume structure: same section order, same major headings, same jobs, same dates, and similar bullet/list organization.',
-      'The visual design does not need to be identical, but the generated resume must feel organized like the original resume.',
-      'Make conservative edits only where the original resume provides support. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
-      'Update the resume across all relevant parts, including Summary/Profile, Skills, and relevant experience bullets when supported.',
-      'Do not add generic notes or explanation sections to the resume.',
-      'Return only JSON with keys "resume_text" and "change_summary".'
-    ].join(' '),
-    '',
-    'Original resume:',
-    resume,
-    '',
-    'Job page title:',
-    job.title,
-    '',
-    'Job posting text:',
-    job.text.slice(0, 16000),
-    '',
-    'Task:',
-    '1. Analyze the job listing as a complete hiring brief.',
-    '2. Identify what the employer is really selecting for.',
-    '3. Compare those needs with the original resume.',
-    '4. Produce a matched resume that keeps the original style but foregrounds the most relevant supported experience.',
-    '5. Keep the resume concise and applicant-ready.'
-  ].join('\n');
-}
-
-const GEMINI_MODEL = 'gemini-2.5-flash';
-
-function geminiErrorMessage(status, errorText) {
-  if (status === 400 || status === 401 || status === 403) {
-    return 'Gemini rejected the API key. Check the key and save it again.';
-  }
-  if (status === 429) {
-    return 'Gemini rate limit reached. Wait a minute and try again.';
-  }
-  return `Gemini request failed (${status}): ${errorText.slice(0, 180)}`;
-}
-
-async function callGeminiWithRetry(body) {
-  const maxAttempts = 3;
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    let response;
-    try {
-      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': currentGeminiApiKey
-        },
-        body: JSON.stringify(body)
-      });
-    } catch (_networkError) {
-      lastError = new Error('Could not reach Gemini. Check your internet connection.');
-      response = null;
-    }
-
-    if (response?.ok) return response.json();
-
-    if (response) {
-      const errorText = await response.text();
-      lastError = new Error(geminiErrorMessage(response.status, errorText));
-      const retryable = response.status === 429 || response.status >= 500;
-      if (!retryable) throw lastError;
-    }
-
-    if (attempt < maxAttempts) {
-      await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
-    }
-  }
-
-  throw lastError || new Error('Gemini request failed.');
-}
-
-async function makeAiTailoredResume(resume, job) {
-  if (!currentGeminiApiKey) return null;
-
-  const body = {
-    contents: [
-      {
-        role: 'user',
-        parts: [{ text: buildAiTailoringPrompt(resume, job) }]
-      }
-    ],
-    generationConfig: {
-      temperature: 0.35,
-      responseMimeType: 'application/json'
-    }
-  };
-
-  const data = await callGeminiWithRetry(body);
-  const outputText = (data.candidates || [])
-    .flatMap((candidate) => candidate.content?.parts || [])
-    .map((part) => part.text || '')
-    .join('\n');
-  const result = extractJsonObject(outputText);
-  if (!result.resume_text || typeof result.resume_text !== 'string') {
-    throw new Error('AI did not return resume_text.');
-  }
-
-  return {
-    text: result.resume_text.trim(),
-    summary: result.change_summary || 'AI tailored the resume while preserving the original structure.'
-  };
-}
-
 function makeSafeFilename(value) {
   return value.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80) || 'matched-resume';
 }
 
-function openResumeDb() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('job-resume-tailor', 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore('resume');
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(new Error('Could not open extension storage.'));
+// ---- Backend API ----
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(currentAuthToken ? { Authorization: `Bearer ${currentAuthToken}` } : {}),
+      ...(options.headers || {})
+    }
   });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_e) {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(data?.error || `Request failed (${response.status}).`);
+  }
+  return data;
 }
 
-async function readResumeRecord() {
-  const db = await openResumeDb();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction('resume', 'readonly');
-    const request = transaction.objectStore('resume').get('current');
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(new Error('Could not read stored resume.'));
-    transaction.oncomplete = () => db.close();
-  });
+function renderQuota() {
+  if (!currentQuota) {
+    quotaState.textContent = '';
+    upgradeButton.classList.add('hidden');
+    return;
+  }
+  const planLabel = currentQuota.plan === 'pro' ? 'Pro' : 'Free';
+  quotaState.textContent = `${planLabel} plan: ${currentQuota.remaining} of ${currentQuota.limit} generations left`;
+  upgradeButton.classList.toggle('hidden', currentQuota.plan === 'pro');
 }
 
-async function writeResumeRecord(record) {
-  const db = await openResumeDb();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction('resume', 'readwrite');
-    transaction.objectStore('resume').put(record, 'current');
-    transaction.oncomplete = () => {
-      db.close();
-      resolve();
-    };
-    transaction.onerror = () => reject(new Error('Could not store resume.'));
-  });
+async function refreshAccount() {
+  const me = await apiFetch('/api/me');
+  currentQuota = me;
+  renderQuota();
+  accountState.textContent = me.email;
 }
 
-async function deleteResumeRecord() {
-  const db = await openResumeDb();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction('resume', 'readwrite');
-    transaction.objectStore('resume').delete('current');
-    transaction.oncomplete = () => {
-      db.close();
-      resolve();
-    };
-    transaction.onerror = () => reject(new Error('Could not clear stored resume.'));
-  });
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 }
+
+async function completeSignIn(token, user) {
+  currentAuthToken = token;
+  await chrome.storage.local.set({ authToken: token });
+  currentQuota = user;
+  renderQuota();
+  accountState.textContent = user.email;
+  signedOutPanel.classList.add('hidden');
+  signedInContent.classList.remove('hidden');
+  signInState.textContent = '';
+  await loadSavedState();
+}
+
+signInButton.addEventListener('click', async () => {
+  signInButton.disabled = true;
+  signInState.textContent = 'Opening sign-in page...';
+
+  try {
+    const start = await apiFetch('/auth/start', { method: 'POST' });
+    await chrome.tabs.create({ url: start.verifyUrl });
+    signInState.textContent = 'Complete sign-in in the new tab, then come back here.';
+
+    stopPolling();
+    pollTimer = setInterval(async () => {
+      try {
+        const poll = await apiFetch(`/auth/poll?sessionId=${start.sessionId}`);
+        if (poll.status === 'verified' && poll.token) {
+          stopPolling();
+          await completeSignIn(poll.token, poll.user);
+        }
+      } catch (_pollError) {
+        // Keep polling; transient errors are fine here.
+      }
+    }, 2000);
+  } catch (error) {
+    signInState.textContent = error.message || 'Could not start sign-in.';
+  } finally {
+    signInButton.disabled = false;
+  }
+});
+
+upgradeButton.addEventListener('click', async () => {
+  upgradeButton.disabled = true;
+  try {
+    const result = await apiFetch('/api/checkout', { method: 'POST', body: JSON.stringify({}) });
+    await chrome.tabs.create({ url: result.url });
+  } catch (error) {
+    quotaState.textContent = error.message || 'Could not start checkout.';
+  } finally {
+    upgradeButton.disabled = false;
+  }
+});
+
+// ---- PDF/DOCX generation (unchanged local rendering) ----
 
 function escapePdfText(value) {
   return value
@@ -484,17 +408,17 @@ function normalizeResumeText(value) {
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
     .replace(/[–—]/g, '-')
-    .replace(/\u00a0/g, ' ');
+    .replace(/ /g, ' ');
 }
 
 function sanitizePdfDrawText(value) {
   // Standard PDF fonts only encode WinAnsi (Latin-1); wider scripts must use the DOCX download.
   return normalizeResumeText(value)
-    .replace(/[^\x09\x0A\x0D\x20-\x7E\u00a1-\u00ff]/g, '');
+    .replace(/[^\x09\x0A\x0D\x20-\x7E¡-ÿ]/g, '');
 }
 
 function textNeedsUnicodeFont(value) {
-  return /[^\x09\x0A\x0D\x20-\x7E\u00a1-\u00ff]/.test(normalizeResumeText(value));
+  return /[^\x09\x0A\x0D\x20-\x7E¡-ÿ]/.test(normalizeResumeText(value));
 }
 
 function getEditedResumeText() {
@@ -572,9 +496,9 @@ async function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   await new Promise((resolve, reject) => {
     chrome.downloads.download({ url, filename, saveAs: true }, (downloadId) => {
-      const error = chrome.runtime.lastError;
-      if (error) {
-        reject(new Error(error.message));
+      const downloadError = chrome.runtime.lastError;
+      if (downloadError) {
+        reject(new Error(downloadError.message));
         return;
       }
       resolve(downloadId);
@@ -582,11 +506,54 @@ async function downloadBlob(blob, filename) {
   });
 }
 
-async function saveExtractedResume(text) {
-  await chrome.storage.local.set({
-    resumeSavedAt: text ? new Date().toISOString() : null
+// ---- Local file storage (IndexedDB keeps the original file for download-original) ----
+
+function openResumeDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('job-resume-tailor', 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore('resume');
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(new Error('Could not open extension storage.'));
   });
-  currentResumeText = text;
+}
+
+async function readResumeRecord() {
+  const db = await openResumeDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('resume', 'readonly');
+    const request = transaction.objectStore('resume').get('current');
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(new Error('Could not read stored resume.'));
+    transaction.oncomplete = () => db.close();
+  });
+}
+
+async function writeResumeRecord(record) {
+  const db = await openResumeDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('resume', 'readwrite');
+    transaction.objectStore('resume').put(record, 'current');
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(new Error('Could not store resume.'));
+  });
+}
+
+async function deleteResumeRecord() {
+  const db = await openResumeDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('resume', 'readwrite');
+    transaction.objectStore('resume').delete('current');
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(new Error('Could not clear stored resume.'));
+  });
 }
 
 function readFileAsArrayBuffer(file) {
@@ -718,39 +685,32 @@ async function storeOriginalResume(file) {
     savedAt: new Date().toISOString()
   };
   await writeResumeRecord(record);
-  await chrome.storage.local.set({
-    originalResumeFile: {
-      name: record.name,
-      type: record.type,
-      size: record.size,
-      savedAt: record.savedAt
-    }
-  });
   currentOriginalResume = record;
 }
 
+// ---- App state ----
+
+function appendChatMessage(role, text) {
+  const bubble = document.createElement('div');
+  bubble.className = `chat-message ${role}`;
+  bubble.textContent = text;
+  chatLog.appendChild(bubble);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
 async function loadSavedState() {
-  const saved = await chrome.storage.local.get(['tailoredResume', 'originalResumeFile', 'resumeText', 'geminiApiKey', 'openAiApiKey']);
   currentOriginalResume = await readResumeRecord();
-  currentResumeText = currentOriginalResume?.text || saved.resumeText || '';
-  currentGeneratedResume = saved.tailoredResume || null;
-  currentGeminiApiKey = saved.geminiApiKey || saved.openAiApiKey || '';
-  apiKey.value = currentGeminiApiKey ? 'saved-key' : '';
-  aiState.textContent = currentGeminiApiKey ? 'Gemini tailoring is on.' : 'Gemini API key required to generate a resume.';
+  currentResumeText = currentOriginalResume?.text || '';
 
   if (currentOriginalResume?.name && currentResumeText) {
     saveState.textContent = `Stored in extension: ${currentOriginalResume.name}`;
   } else {
-    saveState.textContent = currentResumeText ? `Stored ${currentResumeText.split(/\s+/).length} words` : 'No resume stored';
+    saveState.textContent = 'No resume stored';
   }
 
-  if (currentGeneratedResume?.text) {
-    generatedState.textContent = `Last generated: ${currentGeneratedResume.filename}`;
-    resumeDraft.value = currentGeneratedResume.text;
-  } else {
-    generatedState.textContent = 'No resume generated yet.';
-    resumeDraft.value = '';
-  }
+  generatedState.textContent = 'No resume generated yet.';
+  resumeDraft.value = '';
+  chatLog.innerHTML = '';
   updateDownloadButtons();
   downloadOriginal.disabled = !currentOriginalResume;
   analyzeJob.disabled = !currentResumeText;
@@ -786,11 +746,16 @@ resumeFile.addEventListener('change', async () => {
     const extractedText = await extractResumeText(file);
     if (!extractedText) throw new Error('No readable resume text found.');
 
-    await saveExtractedResume(extractedText);
+    currentResumeText = extractedText;
     await storeOriginalResume(file);
-    await chrome.storage.local.remove(['tailoredResume']);
+    await apiFetch('/api/resume', {
+      method: 'POST',
+      body: JSON.stringify({ filename: file.name, resumeText: extractedText })
+    });
+
     currentGeneratedResume = null;
     resumeDraft.value = '';
+    chatLog.innerHTML = '';
     updateDownloadButtons();
     analyzeJob.disabled = false;
     generatedState.textContent = 'Resume saved. Open a job page and generate a new resume.';
@@ -803,40 +768,13 @@ resumeFile.addEventListener('change', async () => {
   }
 });
 
-saveApiKey.addEventListener('click', async () => {
-  const value = apiKey.value.trim();
-  if (!value || value === 'saved-key') {
-    aiState.textContent = currentGeminiApiKey ? 'Gemini tailoring is on.' : 'Paste a Gemini API key first.';
-    return;
-  }
-
-  await chrome.storage.local.set({ geminiApiKey: value });
-  await chrome.storage.local.remove(['openAiApiKey']);
-  currentGeminiApiKey = value;
-  apiKey.value = 'saved-key';
-  aiState.textContent = 'Gemini tailoring is on.';
-});
-
-clearApiKey.addEventListener('click', async () => {
-  await chrome.storage.local.remove(['geminiApiKey', 'openAiApiKey']);
-  currentGeminiApiKey = '';
-  apiKey.value = '';
-  aiState.textContent = 'Gemini API key required to generate a resume.';
-});
-
-apiKey.addEventListener('focus', () => {
-  if (apiKey.value === 'saved-key') {
-    apiKey.value = '';
-  }
-});
-
 clearResume.addEventListener('click', async () => {
   await deleteResumeRecord();
-  await chrome.storage.local.remove(['resumeText', 'resumeSavedAt', 'tailoredResume', 'originalResumeFile']);
   currentResumeText = '';
   currentGeneratedResume = null;
   currentOriginalResume = null;
   resumeDraft.value = '';
+  chatLog.innerHTML = '';
   updateDownloadButtons();
   downloadOriginal.disabled = true;
   analyzeJob.disabled = true;
@@ -851,35 +789,34 @@ analyzeJob.addEventListener('click', async () => {
     saveState.textContent = 'Upload a resume first';
     return;
   }
-  if (!currentGeminiApiKey) {
-    aiState.textContent = 'Save a Gemini API key before generating.';
-    return;
-  }
 
   setBusy(true);
   jobState.textContent = 'Reading page...';
 
   try {
     const job = await getActiveJobText();
-    jobState.textContent = 'Gemini is studying job listing...';
-    const aiResult = await makeAiTailoredResume(resume, job);
-    const draft = aiResult.text;
-    const aiSummary = aiResult.summary;
-    aiState.textContent = 'Gemini tailoring completed.';
+    jobState.textContent = 'Generating your tailored resume...';
+
+    const result = await apiFetch('/api/generate', {
+      method: 'POST',
+      body: JSON.stringify({ jobTitle: job.title, jobUrl: job.url, jobText: job.text })
+    });
 
     const filename = `${makeSafeFilename(extractJobTitle(job.text, job.title))}-matched-resume.pdf`;
     currentGeneratedResume = {
-      text: draft,
+      id: result.generationId,
+      text: result.text,
       filename,
-      aiSummary,
-      createdAt: new Date().toISOString()
+      aiSummary: result.summary
     };
+    currentQuota = result.quota;
+    renderQuota();
 
-    await chrome.storage.local.set({ tailoredResume: currentGeneratedResume, lastJobUrl: job.url });
-    resumeDraft.value = draft;
+    resumeDraft.value = result.text;
+    chatLog.innerHTML = '';
     updateDownloadButtons();
     jobState.textContent = job.title || 'Resume generated from this job listing';
-    generatedState.textContent = 'Generated. Review and edit before downloading.';
+    generatedState.textContent = 'Generated. Review, refine with chat, then download.';
   } catch (error) {
     jobState.textContent = error.message || 'Unable to tailor this page';
   } finally {
@@ -890,9 +827,37 @@ analyzeJob.addEventListener('click', async () => {
 resumeDraft.addEventListener('input', () => {
   if (currentGeneratedResume) {
     currentGeneratedResume.text = getEditedResumeText();
-    chrome.storage.local.set({ tailoredResume: currentGeneratedResume });
   }
   updateDownloadButtons();
+});
+
+async function sendChatRevision() {
+  const instruction = chatInput.value.trim();
+  if (!instruction || !currentGeneratedResume) return;
+
+  appendChatMessage('user', instruction);
+  chatInput.value = '';
+  setBusy(true);
+
+  try {
+    const result = await apiFetch('/api/revise', {
+      method: 'POST',
+      body: JSON.stringify({ generationId: currentGeneratedResume.id, instruction })
+    });
+    currentGeneratedResume.text = result.text;
+    resumeDraft.value = result.text;
+    updateDownloadButtons();
+    appendChatMessage('assistant', result.summary);
+  } catch (error) {
+    appendChatMessage('assistant', error.message || 'Could not apply that change.');
+  } finally {
+    setBusy(false);
+  }
+}
+
+chatSend.addEventListener('click', sendChatRevision);
+chatInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') sendChatRevision();
 });
 
 downloadPdf.addEventListener('click', async () => {
@@ -946,4 +911,28 @@ downloadOriginal.addEventListener('click', async () => {
   });
 });
 
-loadSavedState();
+async function init() {
+  const saved = await chrome.storage.local.get(['authToken']);
+  currentAuthToken = saved.authToken || '';
+
+  if (!currentAuthToken) {
+    signedOutPanel.classList.remove('hidden');
+    signedInContent.classList.add('hidden');
+    return;
+  }
+
+  try {
+    await refreshAccount();
+    signedOutPanel.classList.add('hidden');
+    signedInContent.classList.remove('hidden');
+    await loadSavedState();
+  } catch (_error) {
+    // Token expired or invalid; fall back to signed-out state.
+    currentAuthToken = '';
+    await chrome.storage.local.remove(['authToken']);
+    signedOutPanel.classList.remove('hidden');
+    signedInContent.classList.add('hidden');
+  }
+}
+
+init();

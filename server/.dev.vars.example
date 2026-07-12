@@ -1,0 +1,11 @@
+AUTH_SECRET=replace-with-a-long-random-string
+GEMINI_API_KEY=your-gemini-api-key
+PUBLIC_BASE_URL=http://localhost:8787
+
+# Optional: leave unset locally to use dev mode (magic link shown on-page instead of emailed)
+RESEND_API_KEY=
+EMAIL_FROM=Job Resume Tailor <onboarding@resend.dev>
+
+# Optional: leave unset locally to disable real billing (checkout will return a clear error)
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=

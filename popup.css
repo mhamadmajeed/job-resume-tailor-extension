@@ -200,3 +200,61 @@ textarea:focus {
   background: #f8fbf9;
   line-height: 1.35;
 }
+
+.hidden {
+  display: none !important;
+}
+
+.hint {
+  font-size: 11px;
+  color: #7a8a86;
+}
+
+.quota-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row;
+  gap: 10px;
+}
+
+.quota-panel p {
+  margin: 0;
+}
+
+.chat-panel .actions {
+  grid-template-columns: 1fr auto;
+}
+
+.chat-log {
+  max-height: 140px;
+  overflow-y: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.chat-log:empty::before {
+  content: "No revisions yet.";
+  color: #9aa5a1;
+  font-size: 12px;
+}
+
+.chat-message {
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.chat-message.user {
+  background: #e5f0ed;
+  color: #1f2528;
+  justify-self: end;
+  max-width: 85%;
+}
+
+.chat-message.assistant {
+  background: #f1efe8;
+  color: #4a5256;
+  max-width: 85%;
+}

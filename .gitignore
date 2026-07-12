@@ -1,1 +1,4 @@
 node_modules/
+server/node_modules/
+server/.dev.vars
+server/.wrangler/
