@@ -33,11 +33,13 @@ export async function createCheckoutSession(env, user, successUrl, cancelUrl) {
     mode: 'subscription',
     'line_items[0][price]': env.PRO_PRICE_ID,
     'line_items[0][quantity]': 1,
-    customer_email: user.stripe_customer_id ? undefined : user.email,
-    customer: user.stripe_customer_id || undefined,
+    // Stripe's own Checkout page collects the payer's email; we only need to carry the
+    // device id through so the webhook can mark the right (anonymous) user as pro.
+    customer: user?.stripe_customer_id || undefined,
     success_url: successUrl,
     cancel_url: cancelUrl,
-    'metadata[user_id]': user.id
+    'metadata[device_id]': user.id,
+    'subscription_data[metadata][device_id]': user.id
   });
 }
 

@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
+  email TEXT,
   plan TEXT NOT NULL DEFAULT 'free',
   generations_used INTEGER NOT NULL DEFAULT 0,
   period_start TEXT NOT NULL,
@@ -32,16 +32,6 @@ CREATE TABLE IF NOT EXISTS revisions (
   role TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS login_sessions (
-  session_id TEXT PRIMARY KEY,
-  email TEXT,
-  magic_token TEXT UNIQUE,
-  status TEXT NOT NULL DEFAULT 'pending',
-  bearer_token TEXT,
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id);

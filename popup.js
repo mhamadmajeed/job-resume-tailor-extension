@@ -9,10 +9,6 @@ const resumeDraft = document.querySelector('#resumeDraft');
 const downloadPdf = document.querySelector('#downloadPdf');
 const downloadDocx = document.querySelector('#downloadDocx');
 const accountState = document.querySelector('#accountState');
-const signedOutPanel = document.querySelector('#signedOutPanel');
-const signedInContent = document.querySelector('#signedInContent');
-const signInButton = document.querySelector('#signInButton');
-const signInState = document.querySelector('#signInState');
 const quotaState = document.querySelector('#quotaState');
 const upgradeButton = document.querySelector('#upgradeButton');
 const chatLog = document.querySelector('#chatLog');
@@ -22,9 +18,19 @@ const chatSend = document.querySelector('#chatSend');
 let currentResumeText = '';
 let currentGeneratedResume = null;
 let currentOriginalResume = null;
-let currentAuthToken = '';
+let currentDeviceId = '';
 let currentQuota = null;
 let pollTimer = null;
+
+// No accounts: a random id is generated once per browser install and sent on every
+// request so the backend can track free-tier usage and Stripe subscription status.
+async function getOrCreateDeviceId() {
+  const stored = await chrome.storage.local.get(['deviceId']);
+  if (stored.deviceId) return stored.deviceId;
+  const deviceId = crypto.randomUUID();
+  await chrome.storage.local.set({ deviceId });
+  return deviceId;
+}
 
 function setBusy(isBusy) {
   analyzeJob.disabled = isBusy || !currentResumeText;
@@ -59,7 +65,7 @@ async function apiFetch(path, options = {}) {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(currentAuthToken ? { Authorization: `Bearer ${currentAuthToken}` } : {}),
+      'X-Device-Id': currentDeviceId,
       ...(options.headers || {})
     }
   });
@@ -80,19 +86,20 @@ async function apiFetch(path, options = {}) {
 function renderQuota() {
   if (!currentQuota) {
     quotaState.textContent = '';
-    upgradeButton.classList.add('hidden');
     return;
   }
-  const planLabel = currentQuota.plan === 'pro' ? 'Pro' : 'Free';
-  quotaState.textContent = `${planLabel} plan: ${currentQuota.remaining} of ${currentQuota.limit} generations left`;
-  upgradeButton.classList.toggle('hidden', currentQuota.plan === 'pro');
+  const isPro = currentQuota.isPro;
+  accountState.textContent = isPro ? 'Pro plan' : 'Free plan';
+  quotaState.textContent = isPro
+    ? `Pro plan active - no watermark. ${currentQuota.generationsUsed} generated so far.`
+    : `Free plan - resumes include a watermark. ${currentQuota.generationsUsed} generated so far.`;
+  upgradeButton.textContent = isPro ? 'Manage subscription' : 'Upgrade to Pro ($29/mo, remove watermark)';
 }
 
 async function refreshAccount() {
   const me = await apiFetch('/api/me');
   currentQuota = me;
   renderQuota();
-  accountState.textContent = me.email;
 }
 
 function stopPolling() {
@@ -102,51 +109,25 @@ function stopPolling() {
   }
 }
 
-async function completeSignIn(token, user) {
-  currentAuthToken = token;
-  await chrome.storage.local.set({ authToken: token });
-  currentQuota = user;
-  renderQuota();
-  accountState.textContent = user.email;
-  signedOutPanel.classList.add('hidden');
-  signedInContent.classList.remove('hidden');
-  signInState.textContent = '';
-  await loadSavedState();
-}
-
-signInButton.addEventListener('click', async () => {
-  signInButton.disabled = true;
-  signInState.textContent = 'Opening sign-in page...';
-
-  try {
-    const start = await apiFetch('/auth/start', { method: 'POST' });
-    await chrome.tabs.create({ url: start.verifyUrl });
-    signInState.textContent = 'Complete sign-in in the new tab, then come back here.';
-
-    stopPolling();
-    pollTimer = setInterval(async () => {
-      try {
-        const poll = await apiFetch(`/auth/poll?sessionId=${start.sessionId}`);
-        if (poll.status === 'verified' && poll.token) {
-          stopPolling();
-          await completeSignIn(poll.token, poll.user);
-        }
-      } catch (_pollError) {
-        // Keep polling; transient errors are fine here.
-      }
-    }, 2000);
-  } catch (error) {
-    signInState.textContent = error.message || 'Could not start sign-in.';
-  } finally {
-    signInButton.disabled = false;
-  }
-});
-
 upgradeButton.addEventListener('click', async () => {
   upgradeButton.disabled = true;
   try {
     const result = await apiFetch('/api/checkout', { method: 'POST', body: JSON.stringify({}) });
     await chrome.tabs.create({ url: result.url });
+
+    // Poll for a couple of minutes so the popup flips to Pro as soon as the Stripe
+    // webhook lands, without the user having to reopen the extension.
+    stopPolling();
+    let attempts = 0;
+    pollTimer = setInterval(async () => {
+      attempts += 1;
+      try {
+        await refreshAccount();
+        if (currentQuota?.isPro || attempts > 60) stopPolling();
+      } catch (_pollError) {
+        // Transient errors are fine here; keep polling until the attempt cap.
+      }
+    }, 2000);
   } catch (error) {
     quotaState.textContent = error.message || 'Could not start checkout.';
   } finally {
@@ -912,27 +893,15 @@ downloadOriginal.addEventListener('click', async () => {
 });
 
 async function init() {
-  const saved = await chrome.storage.local.get(['authToken']);
-  currentAuthToken = saved.authToken || '';
-
-  if (!currentAuthToken) {
-    signedOutPanel.classList.remove('hidden');
-    signedInContent.classList.add('hidden');
-    return;
-  }
+  currentDeviceId = await getOrCreateDeviceId();
 
   try {
     await refreshAccount();
-    signedOutPanel.classList.add('hidden');
-    signedInContent.classList.remove('hidden');
-    await loadSavedState();
-  } catch (_error) {
-    // Token expired or invalid; fall back to signed-out state.
-    currentAuthToken = '';
-    await chrome.storage.local.remove(['authToken']);
-    signedOutPanel.classList.remove('hidden');
-    signedInContent.classList.add('hidden');
+  } catch (error) {
+    quotaState.textContent = error.message || 'Could not reach the server.';
   }
+
+  await loadSavedState();
 }
 
 init();
