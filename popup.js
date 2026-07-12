@@ -10,6 +10,7 @@ const downloadPdf = document.querySelector('#downloadPdf');
 const downloadDocx = document.querySelector('#downloadDocx');
 const accountState = document.querySelector('#accountState');
 const quotaState = document.querySelector('#quotaState');
+const upsellPanel = document.querySelector('#upsellPanel');
 const upgradeButton = document.querySelector('#upgradeButton');
 const chatLog = document.querySelector('#chatLog');
 const chatInput = document.querySelector('#chatInput');
@@ -90,10 +91,14 @@ function renderQuota() {
   }
   const isPro = currentQuota.isPro;
   accountState.textContent = isPro ? 'Pro plan' : 'Free plan';
-  quotaState.textContent = isPro
-    ? `Pro plan active - no watermark. ${currentQuota.generationsUsed} generated so far.`
-    : `Free plan - resumes include a watermark. ${currentQuota.generationsUsed} generated so far.`;
-  upgradeButton.textContent = isPro ? 'Manage subscription' : 'Upgrade to Pro ($29/mo, remove watermark)';
+  quotaState.textContent = `${currentQuota.generationsUsed} resume${currentQuota.generationsUsed === 1 ? '' : 's'} generated so far.`;
+
+  // Only pitch the upgrade after they've actually seen a watermarked result, not upfront.
+  if (isPro) upsellPanel.classList.add('hidden');
+}
+
+function maybeShowUpsell() {
+  upsellPanel.classList.toggle('hidden', Boolean(currentQuota?.isPro));
 }
 
 async function refreshAccount() {
@@ -692,6 +697,7 @@ async function loadSavedState() {
   generatedState.textContent = 'No resume generated yet.';
   resumeDraft.value = '';
   chatLog.innerHTML = '';
+  upsellPanel.classList.add('hidden');
   updateDownloadButtons();
   downloadOriginal.disabled = !currentOriginalResume;
   analyzeJob.disabled = !currentResumeText;
@@ -762,6 +768,7 @@ clearResume.addEventListener('click', async () => {
   saveState.textContent = 'No resume stored';
   jobState.textContent = 'Upload once, open a job page, then generate.';
   generatedState.textContent = 'No resume generated yet.';
+  upsellPanel.classList.add('hidden');
 });
 
 analyzeJob.addEventListener('click', async () => {
@@ -792,6 +799,7 @@ analyzeJob.addEventListener('click', async () => {
     };
     currentQuota = result.quota;
     renderQuota();
+    maybeShowUpsell();
 
     resumeDraft.value = result.text;
     chatLog.innerHTML = '';
@@ -828,6 +836,7 @@ async function sendChatRevision() {
     currentGeneratedResume.text = result.text;
     resumeDraft.value = result.text;
     updateDownloadButtons();
+    maybeShowUpsell();
     appendChatMessage('assistant', result.summary);
   } catch (error) {
     appendChatMessage('assistant', error.message || 'Could not apply that change.');

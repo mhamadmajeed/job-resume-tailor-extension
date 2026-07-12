@@ -21,7 +21,6 @@
       <div id="signedInContent">
         <section class="panel quota-panel">
           <p id="quotaState">-</p>
-          <button id="upgradeButton" type="button">Upgrade to Pro ($29/mo, remove watermark)</button>
         </section>
 
         <section class="panel">
@@ -45,6 +44,11 @@
             </div>
           </div>
           <p id="generatedState" class="generated-state">No resume generated yet.</p>
+
+          <div id="upsellPanel" class="upsell hidden">
+            <p>This resume includes a small watermark line at the end.</p>
+            <button id="upgradeButton" type="button" class="primary">Remove watermark - Upgrade to Pro ($29/mo)</button>
+          </div>
 
           <label class="field">
             <span>Edit before download</span>

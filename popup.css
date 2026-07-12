@@ -222,6 +222,24 @@ textarea:focus {
   margin: 0;
 }
 
+.upsell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  background: #fff7e6;
+  border: 1px solid #f0d999;
+  border-radius: 8px;
+}
+
+.upsell p {
+  margin: 0;
+  font-size: 12px;
+  color: #6b5a2a;
+}
+
 .chat-panel .actions {
   grid-template-columns: 1fr auto;
 }
