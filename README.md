@@ -10,7 +10,7 @@ chat revisions to an existing generation don't count against the quota.
 ## Project layout
 
 - `/` — the extension (popup UI, job-listing scraper, local PDF/DOCX rendering)
-- `/server` — the Node.js/Express backend (auth, resume storage, Gemini calls, Stripe billing)
+- `/server` — the Node.js/Express backend (auth, resume storage, Claude calls, Stripe billing)
 
 See [server/README.md](server/README.md) for backend setup and deployment (Railway).
 
@@ -19,7 +19,7 @@ See [server/README.md](server/README.md) for backend setup and deployment (Railw
 ```
 cd server
 npm install
-cp .env.example .env   # fill in AUTH_SECRET and GEMINI_API_KEY
+cp .env.example .env   # fill in AUTH_SECRET and ANTHROPIC_API_KEY
 npm run dev
 ```
 
@@ -46,7 +46,7 @@ Uses Node's built-in SQLite (`node:sqlite`) — no native modules, so it runs th
 
 - The extension only reads the active page when you click **Generate resume** (`activeTab`), never in the background.
 - The original uploaded file stays in the browser's IndexedDB; only its extracted text is sent to your account on the backend.
-- The Gemini API key is stored server-side only.
+- The Claude API key is stored server-side only.
 
 ## Notes
 

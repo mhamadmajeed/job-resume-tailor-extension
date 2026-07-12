@@ -4,7 +4,7 @@ import { db } from './db.js';
 import { uuid, nowIso, signToken, requireAuth, asyncRoute } from './util.js';
 import { emailFormPage, linkSentPage, confirmedPage, errorPage } from './pages.js';
 import { sendMagicLinkEmail } from './email.js';
-import { tailorResume, reviseResume } from './gemini.js';
+import { tailorResume, reviseResume } from './claude.js';
 import { createCheckoutSession, verifyStripeWebhook } from './stripe.js';
 
 const app = express();
@@ -191,7 +191,7 @@ authed.post('/generate', asyncRoute(async (req, res) => {
   const job = { title: req.body.jobTitle || '', url: req.body.jobUrl || '', text: req.body.jobText || '' };
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
 
-  const result = await tailorResume(resumeRow.resume_text, job, process.env.GEMINI_API_KEY);
+  const result = await tailorResume(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY);
 
   const generationId = uuid();
   const timestamp = nowIso();
@@ -213,7 +213,7 @@ authed.post('/revise', asyncRoute(async (req, res) => {
   const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, req.auth.uid);
   if (!generation) return res.status(404).json({ error: 'Generation not found.' });
 
-  const result = await reviseResume(generation.current_text, instruction, process.env.GEMINI_API_KEY);
+  const result = await reviseResume(generation.current_text, instruction, process.env.ANTHROPIC_API_KEY);
   const timestamp = nowIso();
 
   db.prepare('UPDATE generations SET current_text = ?, updated_at = ? WHERE id = ?').run(result.text, timestamp, generationId);

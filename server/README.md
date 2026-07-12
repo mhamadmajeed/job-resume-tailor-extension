@@ -1,6 +1,6 @@
 # Job Resume Tailor — Backend
 
-Plain Node.js + Express backend for the extension. Holds the Gemini API key server-side, stores
+Plain Node.js + Express backend for the extension. Holds the Claude API key server-side, stores
 each user's resume and generation history, enforces free/pro quotas, and handles Stripe billing.
 Uses Node's built-in `node:sqlite` for storage — no native modules, no platform-specific binaries,
 runs the same everywhere (this is why it replaced an earlier Cloudflare Workers version: Cloudflare's
@@ -16,7 +16,7 @@ cp .env.example .env
 
 Edit `.env`:
 - `AUTH_SECRET`: any long random string (signs session tokens).
-- `GEMINI_API_KEY`: your Gemini API key.
+- `ANTHROPIC_API_KEY`: your Claude API key.
 - Leave `RESEND_API_KEY` and `STRIPE_SECRET_KEY` empty for local testing — see "Dev mode" below.
 
 ```
@@ -38,7 +38,7 @@ The server runs at `http://localhost:8787` and creates `data/app.db` automatical
 1. Push this repo to GitHub (already done if you're reading this from the pushed repo).
 2. In Railway: **New Project → Deploy from GitHub repo**, pick this repo, set the root directory to `server`.
 3. Railway auto-detects the Node app from `package.json` and runs `npm install && npm start`.
-4. In the service's **Variables** tab, add everything from `.env.example`: `AUTH_SECRET`, `GEMINI_API_KEY`, and once ready `RESEND_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PRO_PRICE_ID`. Set `PUBLIC_BASE_URL` to the `*.up.railway.app` domain Railway assigns (Settings → Networking → Generate Domain).
+4. In the service's **Variables** tab, add everything from `.env.example`: `AUTH_SECRET`, `ANTHROPIC_API_KEY`, and once ready `RESEND_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PRO_PRICE_ID`. Set `PUBLIC_BASE_URL` to the `*.up.railway.app` domain Railway assigns (Settings → Networking → Generate Domain).
 5. Add a **volume** mounted at `/app/data` so `data/app.db` persists across deploys (Railway → your service → Settings → Volumes). Without this, the database resets on every redeploy.
 6. Redeploy. Your API is live at the Railway domain.
 7. Update `config.js` in the extension root with that domain, and confirm it matches the `https://*.up.railway.app/*` entry in `manifest.json`'s `host_permissions` (already set up for any Railway domain).
