@@ -1,0 +1,19 @@
+{
+  "name": "job-resume-tailor-extension",
+  "version": "1.0.0",
+  "description": "A Manifest V3 Chrome extension that stores a resume locally, reads the active job listing page, extracts likely keywords, and creates a tailored resume draft.",
+  "main": "content.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "docx": "^9.6.1",
+    "mammoth": "^1.12.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.7.284"
+  }
+}

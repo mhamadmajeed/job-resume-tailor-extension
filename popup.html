@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Job Resume Tailor</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="header">
+        <div>
+          <h1>Resume Tailor</h1>
+          <p id="saveState">No resume saved</p>
+        </div>
+        <button id="clearResume" class="icon-button" type="button" title="Clear saved resume" aria-label="Clear saved resume">
+          <span aria-hidden="true">x</span>
+        </button>
+      </header>
+
+      <section class="panel">
+        <label class="file-picker">
+          <span>Upload once</span>
+          <input id="resumeFile" type="file" accept=".pdf,.docx,.txt,.md,.text,.csv,.json,.rtf">
+        </label>
+
+        <div class="actions">
+          <button id="analyzeJob" type="button" class="primary" disabled>Generate resume</button>
+          <button id="downloadOriginal" type="button" disabled>Original file</button>
+        </div>
+      </section>
+
+      <section class="panel ai-panel">
+        <div class="setting-row">
+          <label class="setting-label" for="apiKey">Google Gemini API key</label>
+          <input id="apiKey" type="password" autocomplete="off" placeholder="AIza...">
+        </div>
+        <div class="actions">
+          <button id="saveApiKey" type="button">Save Gemini key</button>
+          <button id="clearApiKey" type="button">Clear key</button>
+        </div>
+        <p id="aiState">Gemini is required to understand the job listing and improve the resume.</p>
+      </section>
+
+      <section class="panel result-panel" aria-live="polite">
+        <div class="result-head">
+          <div>
+            <h2>Generated Resume</h2>
+            <p id="jobState">Generate, edit, then download.</p>
+          </div>
+        </div>
+        <p id="generatedState" class="generated-state">No resume generated yet.</p>
+
+        <label class="field">
+          <span>Edit before download</span>
+          <textarea id="resumeDraft" rows="14" spellcheck="true" placeholder="Generated resume will appear here"></textarea>
+        </label>
+
+        <div class="actions">
+          <button id="downloadPdf" type="button" disabled>Download PDF</button>
+          <button id="downloadDocx" type="button" disabled>Download DOCX</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="vendor/mammoth.browser.min.js"></script>
+    <script src="vendor/pdf-lib.min.js"></script>
+    <script src="vendor/docx.iife.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
