@@ -13,7 +13,7 @@
   ],
   "host_permissions": [
     "http://localhost:8787/*",
-    "https://job-resume-tailor-server.*.workers.dev/*"
+    "https://*.up.railway.app/*"
   ],
   "action": {
     "default_title": "Tailor resume",

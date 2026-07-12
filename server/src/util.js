@@ -6,40 +6,15 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
-export function json(data, init = {}) {
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      ...(init.headers || {})
-    }
-  });
-}
-
-export function html(markup, init = {}) {
-  return new Response(markup, {
-    ...init,
-    headers: { 'Content-Type': 'text/html; charset=utf-8', ...(init.headers || {}) }
-  });
-}
-
-export function error(status, message) {
-  return json({ error: message }, { status });
-}
-
 function base64urlEncode(bytes) {
   let binary = '';
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return Buffer.from(binary, 'binary').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function base64urlDecode(value) {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(value.length + (4 - (value.length % 4)) % 4, '=');
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new Uint8Array(Buffer.from(padded, 'base64'));
 }
 
 async function hmacKey(secret) {
@@ -79,10 +54,19 @@ export async function verifyToken(token, secret) {
   return payload;
 }
 
-export async function requireAuth(request, env) {
-  const header = request.headers.get('Authorization') || '';
+export async function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  const payload = await verifyToken(token, env.AUTH_SECRET);
-  if (!payload?.uid) return null;
-  return payload;
+  const payload = await verifyToken(token, process.env.AUTH_SECRET);
+  if (!payload?.uid) return res.status(401).json({ error: 'Sign in required.' });
+  req.auth = payload;
+  next();
+}
+
+export function asyncRoute(handler) {
+  return (req, res) => {
+    Promise.resolve(handler(req, res)).catch((err) => {
+      res.status(500).json({ error: err.message || 'Unexpected server error.' });
+    });
+  };
 }

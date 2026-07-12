@@ -10,25 +10,21 @@ chat revisions to an existing generation don't count against the quota.
 ## Project layout
 
 - `/` — the extension (popup UI, job-listing scraper, local PDF/DOCX rendering)
-- `/server` — the Cloudflare Worker backend (auth, resume storage, Gemini calls, Stripe billing)
+- `/server` — the Node.js/Express backend (auth, resume storage, Gemini calls, Stripe billing)
 
-See [server/README.md](server/README.md) for backend setup and deployment.
+See [server/README.md](server/README.md) for backend setup and deployment (Railway).
 
 ## Run the backend
 
 ```
 cd server
 npm install
-cp .dev.vars.example .dev.vars   # fill in AUTH_SECRET and GEMINI_API_KEY
-npm run db:init
+cp .env.example .env   # fill in AUTH_SECRET and GEMINI_API_KEY
 npm run dev
 ```
 
 This starts the API at `http://localhost:8787`, which matches the default in [config.js](config.js).
-
-> If `wrangler` can't run on your machine (e.g. Windows on ARM64 — Cloudflare doesn't ship a
-> `workerd` build for that platform), skip local dev and deploy straight to Cloudflare instead; see
-> server/README.md for the dashboard-only (no CLI) path.
+Uses Node's built-in SQLite (`node:sqlite`) — no native modules, so it runs the same on any machine.
 
 ## Load the extension in Chrome
 

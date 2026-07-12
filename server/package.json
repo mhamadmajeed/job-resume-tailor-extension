@@ -3,13 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "dev": "wrangler dev",
-    "db:init": "wrangler d1 execute resume-tailor-db --local --file=schema.sql",
-    "db:init:remote": "wrangler d1 execute resume-tailor-db --remote --file=schema.sql",
-    "deploy": "wrangler deploy"
+  "engines": {
+    "node": ">=22.5.0"
   },
-  "devDependencies": {
-    "wrangler": "^4.110.0"
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5"
   }
 }
