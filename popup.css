@@ -294,6 +294,29 @@ button.small {
   color: var(--accent);
 }
 
+/* ---- Progress bar ---- */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.progress-track {
+  height: 7px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), #2b8f7f);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
 /* ---- Result ---- */
 
 .result-head {

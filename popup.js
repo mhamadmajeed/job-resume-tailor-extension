@@ -16,6 +16,35 @@ const matchPanel = document.querySelector('#matchPanel');
 const matchValue = document.querySelector('#matchValue');
 const matchDelta = document.querySelector('#matchDelta');
 const resultPanel = document.querySelector('#resultPanel');
+const progressWrap = document.querySelector('#progressWrap');
+const progressFill = document.querySelector('#progressFill');
+const progressLabel = document.querySelector('#progressLabel');
+
+let progressTimer = null;
+
+function progressShow(label, pct) {
+  progressWrap.classList.remove('hidden');
+  progressLabel.textContent = label;
+  progressFill.style.width = `${pct}%`;
+}
+
+// Creeps the bar toward `limit` while a slow step (page read, AI call) is running,
+// so it keeps moving instead of sitting frozen.
+function progressCrawlTo(limit) {
+  clearInterval(progressTimer);
+  progressTimer = setInterval(() => {
+    const current = parseFloat(progressFill.style.width) || 0;
+    if (current >= limit) return;
+    const step = Math.max(0.35, (limit - current) * 0.035);
+    progressFill.style.width = `${Math.min(limit, current + step)}%`;
+  }, 180);
+}
+
+function progressHide(delayMs = 1200) {
+  clearInterval(progressTimer);
+  progressTimer = null;
+  setTimeout(() => progressWrap.classList.add('hidden'), delayMs);
+}
 
 // The server appends this line to free-plan text. The popup strips it from the
 // editable text and instead renders it as a styled footer in the PDF/DOCX, so the
@@ -448,22 +477,27 @@ async function buildDesignedPdfBlob(text, watermarkLine = '') {
   const pageCount = pdfDoc.getPageCount();
   pdfDoc.getPages().forEach((pdfPage, index) => {
     if (watermarkLine) {
-      // Big bold diagonal stamp across the middle of every page.
+      // Three big diagonal stamps so the watermark covers roughly half the page.
       const stampText = 'JOB RESUME TAILOR - FREE';
-      const stampSize = 38;
+      const stampSize = 42;
       const stampWidth = bold.widthOfTextAtSize(stampText, stampSize);
       const angleDeg = 32;
       const rad = (angleDeg * Math.PI) / 180;
       const extentX = stampWidth * Math.cos(rad);
       const extentY = stampWidth * Math.sin(rad);
-      pdfPage.drawText(stampText, {
-        x: (pageWidth - extentX) / 2,
-        y: (pageHeight - extentY) / 2,
-        size: stampSize,
-        font: bold,
-        color: rgb(0.6, 0.65, 0.63),
-        opacity: 0.22,
-        rotate: degrees(angleDeg)
+      const baseX = (pageWidth - extentX) / 2;
+      const baseY = (pageHeight - extentY) / 2;
+
+      [-0.30, 0, 0.30].forEach((offset) => {
+        pdfPage.drawText(stampText, {
+          x: baseX,
+          y: baseY + pageHeight * offset,
+          size: stampSize,
+          font: bold,
+          color: rgb(0.6, 0.65, 0.63),
+          opacity: 0.2,
+          rotate: degrees(angleDeg)
+        });
       });
     }
     if (pageCount > 1) {
@@ -888,11 +922,14 @@ analyzeJob.addEventListener('click', async () => {
   }
 
   setBusy(true);
-  jobState.textContent = 'Reading page...';
+  jobState.textContent = 'Working...';
+  progressShow('Reading the job page...', 6);
+  progressCrawlTo(18);
 
   try {
     const job = await getActiveJobText();
-    jobState.textContent = 'Generating your tailored resume...';
+    progressShow('AI is tailoring your resume...', 22);
+    progressCrawlTo(82);
 
     const intensity = document.querySelector('input[name="intensity"]:checked')?.value || 'balanced';
     const result = await apiFetch('/api/generate', {
@@ -921,15 +958,19 @@ analyzeJob.addEventListener('click', async () => {
     jobState.textContent = job.title || 'Resume generated from this job listing';
 
     // Deliver the finished PDF immediately - no extra click needed.
+    progressShow('Building your PDF...', 88);
     generatedState.textContent = 'Building your PDF...';
     const pdfBlob = await buildDesignedPdfBlob(bodyText, watermarkLineForPlan());
     await downloadBlob(pdfBlob, filename);
 
+    progressShow('Done - PDF saved to Downloads', 100);
+    progressHide();
     const matchNote = currentMatch.before != null && currentMatch.after != null
       ? ` Match went from ${currentMatch.before}% to ${currentMatch.after}%.`
       : '';
     generatedState.textContent = `PDF saved to your Downloads.${matchNote} Refine below and it re-downloads.`;
   } catch (error) {
+    progressHide(0);
     jobState.textContent = error.message || 'Unable to tailor this page';
   } finally {
     setBusy(false);

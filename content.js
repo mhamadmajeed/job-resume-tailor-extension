@@ -1,5 +1,34 @@
+// LinkedIn is the primary target: dedicated selectors for both the logged-in job
+// view (/jobs/view/... and the /jobs/collections right-hand pane) and the public
+// logged-out job pages.
+const LINKEDIN_TITLE_SELECTORS = [
+  '.job-details-jobs-unified-top-card__job-title h1',
+  '.job-details-jobs-unified-top-card__job-title',
+  '.jobs-unified-top-card__job-title',
+  '.top-card-layout__title',
+  'h1.t-24'
+];
+
+const LINKEDIN_COMPANY_SELECTORS = [
+  '.job-details-jobs-unified-top-card__company-name a',
+  '.job-details-jobs-unified-top-card__company-name',
+  '.jobs-unified-top-card__company-name',
+  '.topcard__org-name-link',
+  '.top-card-layout__second-subline a'
+];
+
+const LINKEDIN_DESCRIPTION_SELECTORS = [
+  '.jobs-description__content',
+  '#job-details',
+  '.jobs-box__html-content',
+  'article.jobs-description__container',
+  '.jobs-search__job-details--container',
+  '.description__text',
+  '.show-more-less-html__markup'
+];
+
 const SITE_SELECTORS = {
-  'linkedin.com': ['.jobs-description__content', '#job-details', '.jobs-box__html-content'],
+  'linkedin.com': LINKEDIN_DESCRIPTION_SELECTORS,
   'indeed.com': ['#jobDescriptionText', '.jobsearch-JobComponent-description'],
   'greenhouse.io': ['.job__description', '#content'],
   'lever.co': ['.posting', '.section-wrapper'],
@@ -83,7 +112,52 @@ function siteSpecificText() {
   return null;
 }
 
+function firstMatchText(selectors) {
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (!element) continue;
+    const text = cleanText(element.innerText || element.textContent || '');
+    if (text) return text.split('\n')[0].trim();
+  }
+  return '';
+}
+
+function isLinkedIn() {
+  return /(^|\.)linkedin\.com$/.test(location.hostname.replace(/^www\./, ''));
+}
+
+function extractLinkedInJob() {
+  const title = firstMatchText(LINKEDIN_TITLE_SELECTORS);
+  const company = firstMatchText(LINKEDIN_COMPANY_SELECTORS);
+
+  let description = '';
+  for (const selector of LINKEDIN_DESCRIPTION_SELECTORS) {
+    const element = document.querySelector(selector);
+    if (!element) continue;
+    const text = visibleText(element);
+    if (text.length > description.length) description = text;
+  }
+  if (description.length < 250) return null;
+
+  const displayTitle = [title, company].filter(Boolean).join(' at ') || cleanText(document.title);
+  const header = [
+    title ? `Job title: ${title}` : '',
+    company ? `Company: ${company}` : ''
+  ].filter(Boolean).join('\n');
+
+  return {
+    title: displayTitle,
+    url: location.href,
+    text: `${header}${header ? '\n\n' : ''}${description}`.slice(0, 30000)
+  };
+}
+
 function extractJobText() {
+  if (isLinkedIn()) {
+    const linkedInJob = extractLinkedInJob();
+    if (linkedInJob) return linkedInJob;
+  }
+
   let best = siteSpecificText();
 
   if (!best) {
