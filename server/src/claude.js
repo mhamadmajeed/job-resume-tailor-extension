@@ -94,9 +94,16 @@ function extractToolInput(data) {
   return toolUse.input;
 }
 
-function buildTailoringSystemPrompt() {
+const INTENSITY_GUIDANCE = {
+  minimal: 'Editing intensity: LIGHT. Make the fewest edits possible: tune the summary, reorder emphasis, and adjust the skills list. Keep almost all original sentences as written; only touch bullets where a small wording change clearly helps. Expect a modest match improvement.',
+  balanced: 'Editing intensity: MEDIUM. Rewrite where it helps: rework the summary, skills, and the most relevant experience bullets, while leaving already-strong content alone.',
+  max: 'Editing intensity: MAXIMUM. Rework wording across every section: reframe all relevant experience toward this role, expand the most relevant bullets, condense or trim less relevant ones, and make the whole resume read as purpose-built for this job. Push the match as high as the candidate\'s real experience allows - but never invent facts.'
+};
+
+function buildTailoringSystemPrompt(intensity) {
   return [
     'You are an expert resume strategist and ATS-aware editor.',
+    INTENSITY_GUIDANCE[intensity] || INTENSITY_GUIDANCE.balanced,
     'Study the full job listing before editing. Infer the role type, seniority, core responsibilities, required qualifications, preferred qualifications, tools/platforms, soft skills, and employer priorities.',
     'Then match the resume to that role by emphasizing the candidate experience that is already supported by the original resume.',
     'Do not extract, list, or paste keywords. Do not keyword-stuff. Rewrite naturally so the resume reads as if it was originally written for this target role.',
@@ -159,8 +166,8 @@ function clampScore(value) {
   return Math.max(0, Math.min(100, Math.round(num)));
 }
 
-export async function tailorResume(resume, job, apiKey) {
-  const data = await callClaudeWithRetry(buildTailoringSystemPrompt(), buildTailoringUserText(resume, job), apiKey);
+export async function tailorResume(resume, job, apiKey, intensity = 'balanced') {
+  const data = await callClaudeWithRetry(buildTailoringSystemPrompt(intensity), buildTailoringUserText(resume, job), apiKey);
   const result = extractToolInput(data);
   if (!result.resume_text || typeof result.resume_text !== 'string') {
     throw new Error('Claude did not return resume_text.');

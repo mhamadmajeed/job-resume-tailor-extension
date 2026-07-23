@@ -246,6 +246,54 @@ button.small {
   white-space: nowrap;
 }
 
+/* ---- Tailoring intensity ---- */
+
+.intensity {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 7px;
+}
+
+.intensity-option input {
+  display: none;
+}
+
+.intensity-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 8px 6px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.intensity-card strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.intensity-card small {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.intensity-card:hover {
+  border-color: #c8d4d1;
+}
+
+.intensity-option input:checked + .intensity-card {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.intensity-option input:checked + .intensity-card strong {
+  color: var(--accent);
+}
+
 /* ---- Result ---- */
 
 .result-head {

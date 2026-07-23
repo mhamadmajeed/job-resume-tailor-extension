@@ -355,7 +355,7 @@ async function buildDesignedPdfBlob(text, watermarkLine = '') {
     return buildPdfBlob(watermarkLine ? `${text}\n\n${watermarkLine}` : text);
   }
 
-  const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+  const { PDFDocument, StandardFonts, rgb, degrees } = window.PDFLib;
   const pdfDoc = await PDFDocument.create();
   const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -448,14 +448,22 @@ async function buildDesignedPdfBlob(text, watermarkLine = '') {
   const pageCount = pdfDoc.getPageCount();
   pdfDoc.getPages().forEach((pdfPage, index) => {
     if (watermarkLine) {
-      const footerSize = 7.5;
-      const footerWidth = italic.widthOfTextAtSize(watermarkLine, footerSize);
-      pdfPage.drawText(sanitizePdfDrawText(watermarkLine), {
-        x: (pageWidth - footerWidth) / 2,
-        y: 22,
-        size: footerSize,
-        font: italic,
-        color: rgb(0.55, 0.6, 0.58)
+      // Big bold diagonal stamp across the middle of every page.
+      const stampText = 'JOB RESUME TAILOR - FREE';
+      const stampSize = 38;
+      const stampWidth = bold.widthOfTextAtSize(stampText, stampSize);
+      const angleDeg = 32;
+      const rad = (angleDeg * Math.PI) / 180;
+      const extentX = stampWidth * Math.cos(rad);
+      const extentY = stampWidth * Math.sin(rad);
+      pdfPage.drawText(stampText, {
+        x: (pageWidth - extentX) / 2,
+        y: (pageHeight - extentY) / 2,
+        size: stampSize,
+        font: bold,
+        color: rgb(0.6, 0.65, 0.63),
+        opacity: 0.22,
+        rotate: degrees(angleDeg)
       });
     }
     if (pageCount > 1) {
@@ -886,9 +894,10 @@ analyzeJob.addEventListener('click', async () => {
     const job = await getActiveJobText();
     jobState.textContent = 'Generating your tailored resume...';
 
+    const intensity = document.querySelector('input[name="intensity"]:checked')?.value || 'balanced';
     const result = await apiFetch('/api/generate', {
       method: 'POST',
-      body: JSON.stringify({ jobTitle: job.title, jobUrl: job.url, jobText: job.text })
+      body: JSON.stringify({ jobTitle: job.title, jobUrl: job.url, jobText: job.text, intensity })
     });
 
     const filename = `${makeSafeFilename(extractJobTitle(job.text, job.title))}-matched-resume.pdf`;

@@ -39,6 +39,20 @@
           <h2>Generate for this job</h2>
         </div>
         <p id="jobState" class="hint">Open a job listing in this tab, then generate.</p>
+        <div class="intensity" role="radiogroup" aria-label="How much should AI edit your resume?">
+          <label class="intensity-option">
+            <input type="radio" name="intensity" value="minimal">
+            <span class="intensity-card"><strong>Light</strong><small>Few edits</small></span>
+          </label>
+          <label class="intensity-option">
+            <input type="radio" name="intensity" value="balanced" checked>
+            <span class="intensity-card"><strong>Medium</strong><small>Balanced</small></span>
+          </label>
+          <label class="intensity-option">
+            <input type="radio" name="intensity" value="max">
+            <span class="intensity-card"><strong>Max</strong><small>Deep rewrite</small></span>
+          </label>
+        </div>
         <button id="analyzeJob" type="button" class="primary big" disabled>Generate tailored PDF</button>
       </section>
 

@@ -141,7 +141,8 @@ authed.post('/generate', asyncRoute(async (req, res) => {
   const job = { title: req.body.jobTitle || '', url: req.body.jobUrl || '', text: req.body.jobText || '' };
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
 
-  const result = await tailorResume(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY);
+  const intensity = ['minimal', 'balanced', 'max'].includes(req.body.intensity) ? req.body.intensity : 'balanced';
+  const result = await tailorResume(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY, intensity);
 
   const generationId = uuid();
   const timestamp = nowIso();
