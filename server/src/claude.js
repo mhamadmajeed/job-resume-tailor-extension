@@ -23,9 +23,18 @@ const RESUME_TOOL = {
 };
 
 const MATCH_RUBRIC = [
-  'Score job match like a strict ATS/recruiter screen: weigh required skills and tools, seniority, domain experience, and role responsibilities that the resume genuinely evidences.',
-  'Use the SAME rubric for match_before and match_after so the two numbers are comparable.',
-  'Be honest: tailoring wording cannot add missing qualifications, so match_after should only exceed match_before by what better framing of real experience justifies. Never report 100 unless the fit is truly exceptional.'
+  'Score job match like a strict, skeptical recruiter deciding whether to even open this application. Judge primarily against the REQUIRED qualifications: hard skills, tools, years of experience, seniority, domain, and credentials.',
+  'Calibration bands - place the score in the right band before fine-tuning it:',
+  '0-15 = different occupation entirely (e.g. a video editor applying to a nursing or accounting role); transferable soft skills do NOT lift an unrelated resume out of this band.',
+  '16-35 = same broad field but the wrong role, or missing most required hard skills.',
+  '36-55 = adjacent role; meets some core requirements but has clear gaps in required skills, seniority, or domain.',
+  '56-75 = solid fit; evidences most core requirements with minor gaps.',
+  '76-90 = strong fit; clearly evidences nearly all required and several preferred qualifications.',
+  '91-95 = exceptional, rare fit. Never score above 95.',
+  'If more than half of the required qualifications are not evidenced in the resume, the score MUST be below 40 regardless of wording quality.',
+  'Use the SAME rubric for match_before and match_after so the numbers are comparable.',
+  'Rewording cannot create missing qualifications: match_after may only exceed match_before modestly (typically 5-20 points), and for an unrelated job BOTH scores must stay low - tailoring an unrelated resume does not make it a match.',
+  'Do not be polite or encouraging in the scores. A low score for a poor match is the correct, useful answer.'
 ].join(' ');
 
 function claudeErrorMessage(status, errorText) {
