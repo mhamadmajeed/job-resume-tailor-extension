@@ -68,6 +68,13 @@ const chatSend = document.querySelector('#chatSend');
 let currentResumeText = '';
 let currentGeneratedResume = null;
 let currentOriginalResume = null;
+let storedResumeFilename = '';
+
+// Output files are named "<original resume name> - <job title>.pdf".
+function buildOutputFilename(jobTitle) {
+  const original = (currentOriginalResume?.name || storedResumeFilename || 'resume').replace(/\.[^.]+$/, '');
+  return `${makeSafeFilename(`${original} - ${jobTitle || 'job'}`)}.pdf`;
+}
 let currentDeviceId = '';
 let currentQuota = null;
 let serverHasResume = false;
@@ -182,8 +189,11 @@ async function restoreServerState() {
   serverHasResume = Boolean(state.resume);
   renderQuota();
 
-  if (state.resume && !currentOriginalResume) {
-    saveState.textContent = `On file: ${state.resume.filename || 'your resume'}`;
+  if (state.resume) {
+    storedResumeFilename = state.resume.filename || '';
+    if (!currentOriginalResume) {
+      saveState.textContent = `On file: ${state.resume.filename || 'your resume'}`;
+    }
   }
 
   if (state.generation) {
@@ -191,7 +201,7 @@ async function restoreServerState() {
     currentGeneratedResume = {
       id: state.generation.id,
       text: restoredBody,
-      filename: `${makeSafeFilename(state.generation.jobTitle || 'matched-resume')}-matched-resume.pdf`,
+      filename: buildOutputFilename(state.generation.jobTitle),
       aiSummary: ''
     };
     currentMatch = { before: state.generation.matchBefore, after: state.generation.matchAfter };
@@ -937,7 +947,7 @@ analyzeJob.addEventListener('click', async () => {
       body: JSON.stringify({ jobTitle: job.title, jobUrl: job.url, jobText: job.text, intensity })
     });
 
-    const filename = `${makeSafeFilename(extractJobTitle(job.text, job.title))}-matched-resume.pdf`;
+    const filename = buildOutputFilename(job.title || extractJobTitle(job.text, job.title));
     const bodyText = stripWatermark(result.text);
     currentGeneratedResume = {
       id: result.generationId,
