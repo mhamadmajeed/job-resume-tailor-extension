@@ -15,6 +15,23 @@ const upgradeButton = document.querySelector('#upgradeButton');
 const matchPanel = document.querySelector('#matchPanel');
 const matchValue = document.querySelector('#matchValue');
 const matchDelta = document.querySelector('#matchDelta');
+const resultPanel = document.querySelector('#resultPanel');
+
+// The server appends this line to free-plan text. The popup strips it from the
+// editable text and instead renders it as a styled footer in the PDF/DOCX, so the
+// document looks clean and the watermark can't be deleted from the editor.
+const WATERMARK_MARKER = 'Made with Job Resume Tailor';
+const WATERMARK_LINE = 'Made with Job Resume Tailor (Free plan) - upgrade to remove this line.';
+
+function stripWatermark(text) {
+  const idx = text.lastIndexOf(WATERMARK_MARKER);
+  if (idx === -1) return text.trim();
+  return text.slice(0, idx).replace(/\n+-{2,}\s*$/, '').trim();
+}
+
+function watermarkLineForPlan() {
+  return currentQuota?.isPro ? '' : WATERMARK_LINE;
+}
 const chatLog = document.querySelector('#chatLog');
 const chatInput = document.querySelector('#chatInput');
 const chatSend = document.querySelector('#chatSend');
@@ -111,7 +128,8 @@ function renderQuota() {
   }
   const isPro = currentQuota.isPro;
   accountState.textContent = isPro ? 'Pro plan' : 'Free plan';
-  quotaState.textContent = `${currentQuota.generationsUsed} resume${currentQuota.generationsUsed === 1 ? '' : 's'} generated so far.`;
+  const used = currentQuota.generationsUsed;
+  quotaState.textContent = used > 0 ? `${used} generated` : '';
 
   // Only pitch the upgrade after they've actually seen a watermarked result, not upfront.
   if (isPro) upsellPanel.classList.add('hidden');
@@ -140,20 +158,22 @@ async function restoreServerState() {
   }
 
   if (state.generation) {
+    const restoredBody = stripWatermark(state.generation.text);
     currentGeneratedResume = {
       id: state.generation.id,
-      text: state.generation.text,
+      text: restoredBody,
       filename: `${makeSafeFilename(state.generation.jobTitle || 'matched-resume')}-matched-resume.pdf`,
       aiSummary: ''
     };
     currentMatch = { before: state.generation.matchBefore, after: state.generation.matchAfter };
     renderMatch();
-    resumeDraft.value = state.generation.text;
+    resultPanel.classList.remove('hidden');
+    resumeDraft.value = restoredBody;
     updateDownloadButtons();
     chatInput.disabled = false;
     chatSend.disabled = false;
     jobState.textContent = state.generation.jobTitle || 'Your last tailored resume';
-    generatedState.textContent = 'Restored your last tailored resume. Keep refining or download it.';
+    generatedState.textContent = 'Your last tailored resume is ready. Refine it or download again.';
     maybeShowUpsell();
   }
 }
@@ -330,8 +350,10 @@ function wrapPdfTextByWidth(text, font, fontSize, maxWidth) {
   return lines;
 }
 
-async function buildDesignedPdfBlob(text) {
-  if (!window.PDFLib) return buildPdfBlob(text);
+async function buildDesignedPdfBlob(text, watermarkLine = '') {
+  if (!window.PDFLib) {
+    return buildPdfBlob(watermarkLine ? `${text}\n\n${watermarkLine}` : text);
+  }
 
   const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
   const pdfDoc = await PDFDocument.create();
@@ -340,9 +362,9 @@ async function buildDesignedPdfBlob(text) {
   const italic = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
   const pageWidth = 612;
   const pageHeight = 792;
-  const marginX = 44;
-  const topMargin = 42;
-  const bottomMargin = 42;
+  const marginX = 40;
+  const topMargin = 38;
+  const bottomMargin = 40;
   const accent = rgb(0.12, 0.34, 0.37);
   const muted = rgb(0.31, 0.35, 0.36);
   const ink = rgb(0.09, 0.1, 0.1);
@@ -360,16 +382,16 @@ async function buildDesignedPdfBlob(text) {
 
   function drawTextLine(value, x, options = {}) {
     const font = options.font || regular;
-    const size = options.size || 10.5;
+    const size = options.size || 10;
     const color = options.color || ink;
     page.drawText(sanitizePdfDrawText(value), { x, y, size, font, color });
-    y -= options.lineHeight || size + 3.5;
+    y -= options.lineHeight || size + 2.8;
   }
 
   function drawWrapped(value, x, width, options = {}) {
     const font = options.font || regular;
-    const size = options.size || 10.5;
-    const lineHeight = options.lineHeight || 14;
+    const size = options.size || 10;
+    const lineHeight = options.lineHeight || 12.6;
     const lines = wrapPdfTextByWidth(value, font, size, width);
     ensureSpace(Math.max(lineHeight, lines.length * lineHeight));
     lines.forEach((line) => {
@@ -382,56 +404,69 @@ async function buildDesignedPdfBlob(text) {
   const subtitle = headerLines[1] || '';
   const contact = headerLines.slice(2).join(' | ');
 
-  drawTextLine(name, marginX, { font: bold, size: 22, color: accent, lineHeight: 25 });
-  if (subtitle) drawTextLine(subtitle, marginX, { font: regular, size: 11.5, color: muted, lineHeight: 15 });
-  if (contact) drawWrapped(contact, marginX, pageWidth - marginX * 2, { font: regular, size: 9.5, color: muted, lineHeight: 12 });
+  drawTextLine(name, marginX, { font: bold, size: 19, color: accent, lineHeight: 22 });
+  if (subtitle) drawTextLine(subtitle, marginX, { font: regular, size: 10.8, color: muted, lineHeight: 13.5 });
+  if (contact) drawWrapped(contact, marginX, pageWidth - marginX * 2, { font: regular, size: 9, color: muted, lineHeight: 11.2 });
   page.drawLine({
-    start: { x: marginX, y: y - 3 },
-    end: { x: pageWidth - marginX, y: y - 3 },
-    thickness: 1.2,
+    start: { x: marginX, y: y - 2 },
+    end: { x: pageWidth - marginX, y: y - 2 },
+    thickness: 1.1,
     color: accent
   });
-  y -= 18;
+  y -= 14;
 
   blocks.forEach((block) => {
-    ensureSpace(42);
+    ensureSpace(38);
     const heading = block.heading.toUpperCase();
-    page.drawText(heading, { x: marginX, y, size: 10.5, font: bold, color: accent });
+    page.drawText(heading, { x: marginX, y, size: 9.5, font: bold, color: accent });
     page.drawLine({
-      start: { x: marginX, y: y - 4 },
-      end: { x: pageWidth - marginX, y: y - 4 },
-      thickness: 0.6,
-      color: rgb(0.72, 0.78, 0.76)
+      start: { x: marginX, y: y - 3.5 },
+      end: { x: pageWidth - marginX, y: y - 3.5 },
+      thickness: 0.5,
+      color: rgb(0.76, 0.82, 0.8)
     });
-    y -= 17;
+    y -= 14;
 
     block.items.forEach((item) => {
       const bulletMatch = item.match(/^[-*•●]\s*(.+)$/);
       const isRoleLine = !bulletMatch && /^[A-Z][A-Z\s,&./'-]+(?:\d{4}|PRESENT|CURRENT|REMOTE|VA|DC|NY|CA)/i.test(item);
 
       if (bulletMatch) {
-        ensureSpace(16);
-        page.drawText('-', { x: marginX + 10, y, size: 10.5, font: bold, color: accent });
-        drawWrapped(bulletMatch[1], marginX + 24, pageWidth - marginX * 2 - 24, { font: regular, size: 10, color: ink, lineHeight: 13 });
+        ensureSpace(14);
+        page.drawText('-', { x: marginX + 8, y, size: 9.8, font: bold, color: accent });
+        drawWrapped(bulletMatch[1], marginX + 20, pageWidth - marginX * 2 - 20, { font: regular, size: 9.6, color: ink, lineHeight: 12.2 });
       } else if (isRoleLine) {
-        y -= 2;
-        drawWrapped(item, marginX, pageWidth - marginX * 2, { font: bold, size: 10.3, color: ink, lineHeight: 13 });
+        y -= 2.5;
+        drawWrapped(item, marginX, pageWidth - marginX * 2, { font: bold, size: 9.9, color: ink, lineHeight: 12.2 });
       } else {
-        drawWrapped(item, marginX, pageWidth - marginX * 2, { font: regular, size: 10.2, color: ink, lineHeight: 13.5 });
+        drawWrapped(item, marginX, pageWidth - marginX * 2, { font: regular, size: 9.7, color: ink, lineHeight: 12.4 });
       }
     });
-    y -= 8;
+    y -= 7;
   });
 
   const pageCount = pdfDoc.getPageCount();
   pdfDoc.getPages().forEach((pdfPage, index) => {
-    pdfPage.drawText(`${index + 1} / ${pageCount}`, {
-      x: pageWidth - marginX - 28,
-      y: 24,
-      size: 8,
-      font: italic,
-      color: muted
-    });
+    if (watermarkLine) {
+      const footerSize = 7.5;
+      const footerWidth = italic.widthOfTextAtSize(watermarkLine, footerSize);
+      pdfPage.drawText(sanitizePdfDrawText(watermarkLine), {
+        x: (pageWidth - footerWidth) / 2,
+        y: 22,
+        size: footerSize,
+        font: italic,
+        color: rgb(0.55, 0.6, 0.58)
+      });
+    }
+    if (pageCount > 1) {
+      pdfPage.drawText(`${index + 1} / ${pageCount}`, {
+        x: pageWidth - marginX - 24,
+        y: 22,
+        size: 8,
+        font: italic,
+        color: muted
+      });
+    }
   });
 
   const bytes = await pdfDoc.save();
@@ -506,13 +541,23 @@ function makeDocxParagraph(line, index) {
   });
 }
 
-async function buildDocxBlob(text) {
+async function buildDocxBlob(text, watermarkLine = '') {
   if (!window.docx) {
     throw new Error('DOCX generator is unavailable.');
   }
 
   const docxLib = window.docx;
   const lines = text.split(/\n/);
+  const children = lines.map((line, index) => makeDocxParagraph(line, index));
+
+  if (watermarkLine) {
+    children.push(new docxLib.Paragraph({
+      children: [new docxLib.TextRun({ text: watermarkLine, italics: true, size: 15, color: '8C9693' })],
+      spacing: { before: 280 },
+      alignment: docxLib.AlignmentType.CENTER
+    }));
+  }
+
   const doc = new docxLib.Document({
     sections: [
       {
@@ -521,7 +566,7 @@ async function buildDocxBlob(text) {
             margin: { top: 720, right: 720, bottom: 720, left: 720 }
           }
         },
-        children: lines.map((line, index) => makeDocxParagraph(line, index))
+        children
       }
     ]
   });
@@ -529,10 +574,10 @@ async function buildDocxBlob(text) {
   return docxLib.Packer.toBlob(doc);
 }
 
-async function downloadBlob(blob, filename) {
+async function downloadBlob(blob, filename, saveAs = false) {
   const url = URL.createObjectURL(blob);
   await new Promise((resolve, reject) => {
-    chrome.downloads.download({ url, filename, saveAs: true }, (downloadId) => {
+    chrome.downloads.download({ url, filename, saveAs }, (downloadId) => {
       const downloadError = chrome.runtime.lastError;
       if (downloadError) {
         reject(new Error(downloadError.message));
@@ -744,7 +789,7 @@ async function loadSavedState() {
   } else if (serverHasResume) {
     saveState.textContent = 'Your resume is on file.';
   } else {
-    saveState.textContent = 'No resume yet - upload one to get started.';
+    saveState.textContent = 'No resume yet';
   }
 
   updateDownloadButtons();
@@ -818,10 +863,11 @@ clearResume.addEventListener('click', async () => {
   updateDownloadButtons();
   downloadOriginal.disabled = true;
   analyzeJob.disabled = true;
-  saveState.textContent = 'No resume yet - upload one to get started.';
-  jobState.textContent = 'Upload once, open a job page, then generate.';
+  saveState.textContent = 'No resume yet';
+  jobState.textContent = 'Open a job listing in this tab, then generate.';
   generatedState.textContent = 'No resume generated yet.';
   upsellPanel.classList.add('hidden');
+  resultPanel.classList.add('hidden');
   currentMatch = { before: null, after: null };
   renderMatch();
 });
@@ -846,9 +892,10 @@ analyzeJob.addEventListener('click', async () => {
     });
 
     const filename = `${makeSafeFilename(extractJobTitle(job.text, job.title))}-matched-resume.pdf`;
+    const bodyText = stripWatermark(result.text);
     currentGeneratedResume = {
       id: result.generationId,
-      text: result.text,
+      text: bodyText,
       filename,
       aiSummary: result.summary
     };
@@ -858,13 +905,21 @@ analyzeJob.addEventListener('click', async () => {
     currentMatch = { before: result.match?.before ?? null, after: result.match?.after ?? null };
     renderMatch();
 
-    resumeDraft.value = result.text;
+    resultPanel.classList.remove('hidden');
+    resumeDraft.value = bodyText;
     chatLog.innerHTML = '';
     updateDownloadButtons();
     jobState.textContent = job.title || 'Resume generated from this job listing';
-    generatedState.textContent = currentMatch.before != null && currentMatch.after != null
-      ? `Your original resume matched this job ${currentMatch.before}%. The tailored version matches ${currentMatch.after}%.`
-      : 'Generated. Review, refine with chat, then download.';
+
+    // Deliver the finished PDF immediately - no extra click needed.
+    generatedState.textContent = 'Building your PDF...';
+    const pdfBlob = await buildDesignedPdfBlob(bodyText, watermarkLineForPlan());
+    await downloadBlob(pdfBlob, filename);
+
+    const matchNote = currentMatch.before != null && currentMatch.after != null
+      ? ` Match went from ${currentMatch.before}% to ${currentMatch.after}%.`
+      : '';
+    generatedState.textContent = `PDF saved to your Downloads.${matchNote} Refine below and it re-downloads.`;
   } catch (error) {
     jobState.textContent = error.message || 'Unable to tailor this page';
   } finally {
@@ -892,8 +947,9 @@ async function sendChatRevision() {
       method: 'POST',
       body: JSON.stringify({ generationId: currentGeneratedResume.id, instruction })
     });
-    currentGeneratedResume.text = result.text;
-    resumeDraft.value = result.text;
+    const revisedBody = stripWatermark(result.text);
+    currentGeneratedResume.text = revisedBody;
+    resumeDraft.value = revisedBody;
     updateDownloadButtons();
     maybeShowUpsell();
 
@@ -905,7 +961,11 @@ async function sendChatRevision() {
     if (result.match?.after != null && previousAfter != null && result.match.after !== previousAfter) {
       summaryText += ` (Job match: ${previousAfter}% -> ${result.match.after}%)`;
     }
-    appendChatMessage('assistant', summaryText);
+
+    // Ship the updated PDF right away so the latest version is always the one on disk.
+    const revisedPdf = await buildDesignedPdfBlob(revisedBody, watermarkLineForPlan());
+    await downloadBlob(revisedPdf, currentGeneratedResume.filename);
+    appendChatMessage('assistant', `${summaryText} Updated PDF saved to your Downloads.`);
   } catch (error) {
     appendChatMessage('assistant', error.message || 'Could not apply that change.');
   } finally {
@@ -925,11 +985,11 @@ downloadPdf.addEventListener('click', async () => {
   setBusy(true);
   try {
     const filename = currentGeneratedResume?.filename || 'generated-resume.pdf';
-    const blob = await buildDesignedPdfBlob(text);
+    const blob = await buildDesignedPdfBlob(text, watermarkLineForPlan());
     await downloadBlob(blob, filename.replace(/\.docx$/i, '.pdf'));
     generatedState.textContent = textNeedsUnicodeFont(text)
-      ? 'PDF downloaded. Some non-Latin characters were dropped; use DOCX to keep them.'
-      : 'PDF downloaded.';
+      ? 'PDF saved to your Downloads. Some non-Latin characters were dropped; use DOCX to keep them.'
+      : 'PDF saved to your Downloads.';
   } catch (error) {
     generatedState.textContent = error.message || 'Could not download PDF.';
   } finally {
@@ -944,9 +1004,9 @@ downloadDocx.addEventListener('click', async () => {
   setBusy(true);
   try {
     const filename = (currentGeneratedResume?.filename || 'generated-resume.pdf').replace(/\.pdf$/i, '.docx');
-    const blob = await buildDocxBlob(text);
+    const blob = await buildDocxBlob(text, watermarkLineForPlan());
     await downloadBlob(blob, filename);
-    generatedState.textContent = 'DOCX downloaded.';
+    generatedState.textContent = 'DOCX saved to your Downloads.';
   } catch (error) {
     generatedState.textContent = error.message || 'Could not download DOCX.';
   } finally {

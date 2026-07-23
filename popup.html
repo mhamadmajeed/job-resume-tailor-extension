@@ -8,73 +8,77 @@
   </head>
   <body>
     <main class="shell">
-      <header class="header">
-        <div>
-          <h1>Resume Tailor</h1>
-          <p id="accountState">Free plan</p>
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">RT</div>
+          <div>
+            <h1>Resume Tailor</h1>
+            <p id="accountState">Free plan</p>
+          </div>
         </div>
-        <button id="clearResume" class="icon-button" type="button" title="Clear saved resume" aria-label="Clear saved resume">
-          <span aria-hidden="true">x</span>
-        </button>
+        <span id="quotaState" class="quota-chip"></span>
       </header>
 
-      <div id="signedInContent">
-        <section class="panel quota-panel">
-          <p id="quotaState">-</p>
-        </section>
+      <section class="panel">
+        <div class="panel-title">
+          <span class="step-dot">1</span>
+          <h2>Your resume</h2>
+          <button id="clearResume" class="icon-button" type="button" title="Remove saved resume" aria-label="Remove saved resume">&times;</button>
+        </div>
+        <label class="file-picker">
+          <input id="resumeFile" type="file" accept=".pdf,.docx,.txt,.md,.text,.csv,.json,.rtf">
+          <span class="file-cta">Choose file</span>
+          <span id="saveState" class="file-state">No resume yet</span>
+        </label>
+        <button id="downloadOriginal" type="button" class="ghost small" disabled>Download original file</button>
+      </section>
 
-        <section class="panel">
-          <label class="file-picker">
-            <span>Upload once</span>
-            <input id="resumeFile" type="file" accept=".pdf,.docx,.txt,.md,.text,.csv,.json,.rtf">
-          </label>
-          <p id="saveState">No resume saved</p>
+      <section class="panel">
+        <div class="panel-title">
+          <span class="step-dot">2</span>
+          <h2>Generate for this job</h2>
+        </div>
+        <p id="jobState" class="hint">Open a job listing in this tab, then generate.</p>
+        <button id="analyzeJob" type="button" class="primary big" disabled>Generate tailored PDF</button>
+      </section>
 
-          <div class="actions">
-            <button id="analyzeJob" type="button" class="primary" disabled>Generate resume</button>
-            <button id="downloadOriginal" type="button" disabled>Original file</button>
+      <section id="resultPanel" class="panel result-panel hidden" aria-live="polite">
+        <div class="result-head">
+          <div>
+            <h2>Tailored resume</h2>
+            <p id="generatedState" class="hint">No resume generated yet.</p>
           </div>
-        </section>
-
-        <section class="panel result-panel" aria-live="polite">
-          <div class="result-head">
-            <div>
-              <h2>Generated Resume</h2>
-              <p id="jobState">Generate, then refine with chat, then download.</p>
-            </div>
-            <div id="matchPanel" class="match-panel hidden">
-              <span id="matchValue" class="match-value">-</span>
-              <span class="match-caption">job match</span>
-              <span id="matchDelta" class="match-delta"></span>
-            </div>
+          <div id="matchPanel" class="match-panel hidden">
+            <span id="matchValue" class="match-value">-</span>
+            <span class="match-caption">job match</span>
+            <span id="matchDelta" class="match-delta"></span>
           </div>
-          <p id="generatedState" class="generated-state">No resume generated yet.</p>
+        </div>
 
-          <div id="upsellPanel" class="upsell hidden">
-            <p>This resume includes a small watermark line at the end.</p>
-            <button id="upgradeButton" type="button" class="primary">Remove watermark - Upgrade to Pro ($29/mo)</button>
-          </div>
+        <div class="actions">
+          <button id="downloadPdf" type="button" class="primary" disabled>Download PDF again</button>
+          <button id="downloadDocx" type="button" class="ghost" disabled>DOCX</button>
+        </div>
 
-          <label class="field">
-            <span>Edit before download</span>
-            <textarea id="resumeDraft" rows="12" spellcheck="true" placeholder="Generated resume will appear here"></textarea>
-          </label>
+        <div id="upsellPanel" class="upsell hidden">
+          <p>Your PDF includes a small watermark line at the bottom.</p>
+          <button id="upgradeButton" type="button" class="primary">Remove watermark - Pro ($29/mo)</button>
+        </div>
 
-          <div class="actions">
-            <button id="downloadPdf" type="button" disabled>Download PDF</button>
-            <button id="downloadDocx" type="button" disabled>Download DOCX</button>
-          </div>
-        </section>
-
-        <section class="panel chat-panel">
-          <h2>Refine with a prompt</h2>
+        <div class="chat-panel">
+          <p class="chat-title">Refine with AI</p>
           <div id="chatLog" class="chat-log"></div>
-          <div class="actions">
+          <div class="chat-row">
             <input id="chatInput" type="text" placeholder="e.g. Make the summary shorter" disabled>
             <button id="chatSend" type="button" class="primary" disabled>Send</button>
           </div>
-        </section>
-      </div>
+        </div>
+
+        <details class="editor">
+          <summary>View &amp; edit resume text</summary>
+          <textarea id="resumeDraft" rows="12" spellcheck="true" placeholder="Generated resume text"></textarea>
+        </details>
+      </section>
     </main>
 
     <script src="vendor/mammoth.browser.min.js"></script>
