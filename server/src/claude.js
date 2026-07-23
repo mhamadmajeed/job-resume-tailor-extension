@@ -106,6 +106,7 @@ function buildTailoringSystemPrompt(intensity) {
     INTENSITY_GUIDANCE[intensity] || INTENSITY_GUIDANCE.balanced,
     'Study the full job listing before editing. Infer the role type, seniority, core responsibilities, required qualifications, preferred qualifications, tools/platforms, soft skills, and employer priorities.',
     'Then match the resume to that role by emphasizing the candidate experience that is already supported by the original resume.',
+    'Mirror the job posting\'s exact terminology: when the resume describes the same skill, tool, role, or activity using a synonym, switch to the employer\'s wording. For example, if the posting says "cinematographer" and the resume says "videographer", write "cinematographer"; if the posting says "stakeholders" and the resume says "clients", prefer "stakeholders". Apply this to titles, skills, and bullet wording - but only when the two terms genuinely describe the same experience. Never relabel experience as something it is not.',
     'Do not extract, list, or paste keywords. Do not keyword-stuff. Rewrite naturally so the resume reads as if it was originally written for this target role.',
     'Preserve the candidate resume structure: same section order, same major headings, same jobs, same dates, and similar bullet/list organization.',
     'Make conservative edits only where the original resume provides support. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
