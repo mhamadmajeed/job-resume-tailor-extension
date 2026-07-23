@@ -12,6 +12,9 @@ const accountState = document.querySelector('#accountState');
 const quotaState = document.querySelector('#quotaState');
 const upsellPanel = document.querySelector('#upsellPanel');
 const upgradeButton = document.querySelector('#upgradeButton');
+const matchPanel = document.querySelector('#matchPanel');
+const matchValue = document.querySelector('#matchValue');
+const matchDelta = document.querySelector('#matchDelta');
 const chatLog = document.querySelector('#chatLog');
 const chatInput = document.querySelector('#chatInput');
 const chatSend = document.querySelector('#chatSend');
@@ -21,7 +24,24 @@ let currentGeneratedResume = null;
 let currentOriginalResume = null;
 let currentDeviceId = '';
 let currentQuota = null;
+let serverHasResume = false;
+let currentMatch = { before: null, after: null };
 let pollTimer = null;
+
+function hasResume() {
+  return Boolean(currentResumeText || serverHasResume);
+}
+
+function renderMatch() {
+  const { before, after } = currentMatch;
+  if (after == null) {
+    matchPanel.classList.add('hidden');
+    return;
+  }
+  matchPanel.classList.remove('hidden');
+  matchValue.textContent = `${after}%`;
+  matchDelta.textContent = before != null && before !== after ? `up from ${before}%` : '';
+}
 
 // No accounts: a random id is generated once per browser install and sent on every
 // request so the backend can track free-tier usage and Stripe subscription status.
@@ -34,7 +54,7 @@ async function getOrCreateDeviceId() {
 }
 
 function setBusy(isBusy) {
-  analyzeJob.disabled = isBusy || !currentResumeText;
+  analyzeJob.disabled = isBusy || !hasResume();
   clearResume.disabled = isBusy;
   downloadOriginal.disabled = isBusy || !currentOriginalResume;
   downloadPdf.disabled = isBusy || !resumeDraft.value.trim();
@@ -105,6 +125,37 @@ async function refreshAccount() {
   const me = await apiFetch('/api/me');
   currentQuota = me;
   renderQuota();
+}
+
+// Pulls plan, stored resume, and the latest generation from the server so closing
+// and reopening the popup never loses the user's work.
+async function restoreServerState() {
+  const state = await apiFetch('/api/state');
+  currentQuota = state.user;
+  serverHasResume = Boolean(state.resume);
+  renderQuota();
+
+  if (state.resume && !currentOriginalResume) {
+    saveState.textContent = `On file: ${state.resume.filename || 'your resume'}`;
+  }
+
+  if (state.generation) {
+    currentGeneratedResume = {
+      id: state.generation.id,
+      text: state.generation.text,
+      filename: `${makeSafeFilename(state.generation.jobTitle || 'matched-resume')}-matched-resume.pdf`,
+      aiSummary: ''
+    };
+    currentMatch = { before: state.generation.matchBefore, after: state.generation.matchAfter };
+    renderMatch();
+    resumeDraft.value = state.generation.text;
+    updateDownloadButtons();
+    chatInput.disabled = false;
+    chatSend.disabled = false;
+    jobState.textContent = state.generation.jobTitle || 'Your last tailored resume';
+    generatedState.textContent = 'Restored your last tailored resume. Keep refining or download it.';
+    maybeShowUpsell();
+  }
 }
 
 function stopPolling() {
@@ -689,18 +740,16 @@ async function loadSavedState() {
   currentResumeText = currentOriginalResume?.text || '';
 
   if (currentOriginalResume?.name && currentResumeText) {
-    saveState.textContent = `Stored in extension: ${currentOriginalResume.name}`;
+    saveState.textContent = `On file: ${currentOriginalResume.name}`;
+  } else if (serverHasResume) {
+    saveState.textContent = 'Your resume is on file.';
   } else {
-    saveState.textContent = 'No resume stored';
+    saveState.textContent = 'No resume yet - upload one to get started.';
   }
 
-  generatedState.textContent = 'No resume generated yet.';
-  resumeDraft.value = '';
-  chatLog.innerHTML = '';
-  upsellPanel.classList.add('hidden');
   updateDownloadButtons();
   downloadOriginal.disabled = !currentOriginalResume;
-  analyzeJob.disabled = !currentResumeText;
+  analyzeJob.disabled = !hasResume();
 }
 
 async function getActiveJobText() {
@@ -740,14 +789,17 @@ resumeFile.addEventListener('change', async () => {
       body: JSON.stringify({ filename: file.name, resumeText: extractedText })
     });
 
+    serverHasResume = true;
     currentGeneratedResume = null;
     resumeDraft.value = '';
     chatLog.innerHTML = '';
+    currentMatch = { before: null, after: null };
+    renderMatch();
     updateDownloadButtons();
     analyzeJob.disabled = false;
-    generatedState.textContent = 'Resume saved. Open a job page and generate a new resume.';
+    generatedState.textContent = 'Resume saved. Open a job page and click Generate.';
     downloadOriginal.disabled = false;
-    saveState.textContent = `Stored in extension: ${file.name}`;
+    saveState.textContent = `On file: ${file.name}`;
   } catch (error) {
     saveState.textContent = error.message || 'Could not read file';
   } finally {
@@ -758,6 +810,7 @@ resumeFile.addEventListener('change', async () => {
 clearResume.addEventListener('click', async () => {
   await deleteResumeRecord();
   currentResumeText = '';
+  serverHasResume = false;
   currentGeneratedResume = null;
   currentOriginalResume = null;
   resumeDraft.value = '';
@@ -765,10 +818,12 @@ clearResume.addEventListener('click', async () => {
   updateDownloadButtons();
   downloadOriginal.disabled = true;
   analyzeJob.disabled = true;
-  saveState.textContent = 'No resume stored';
+  saveState.textContent = 'No resume yet - upload one to get started.';
   jobState.textContent = 'Upload once, open a job page, then generate.';
   generatedState.textContent = 'No resume generated yet.';
   upsellPanel.classList.add('hidden');
+  currentMatch = { before: null, after: null };
+  renderMatch();
 });
 
 analyzeJob.addEventListener('click', async () => {
@@ -800,12 +855,16 @@ analyzeJob.addEventListener('click', async () => {
     currentQuota = result.quota;
     renderQuota();
     maybeShowUpsell();
+    currentMatch = { before: result.match?.before ?? null, after: result.match?.after ?? null };
+    renderMatch();
 
     resumeDraft.value = result.text;
     chatLog.innerHTML = '';
     updateDownloadButtons();
     jobState.textContent = job.title || 'Resume generated from this job listing';
-    generatedState.textContent = 'Generated. Review, refine with chat, then download.';
+    generatedState.textContent = currentMatch.before != null && currentMatch.after != null
+      ? `Your original resume matched this job ${currentMatch.before}%. The tailored version matches ${currentMatch.after}%.`
+      : 'Generated. Review, refine with chat, then download.';
   } catch (error) {
     jobState.textContent = error.message || 'Unable to tailor this page';
   } finally {
@@ -837,7 +896,16 @@ async function sendChatRevision() {
     resumeDraft.value = result.text;
     updateDownloadButtons();
     maybeShowUpsell();
-    appendChatMessage('assistant', result.summary);
+
+    const previousAfter = currentMatch.after;
+    currentMatch = { before: result.match?.before ?? currentMatch.before, after: result.match?.after ?? currentMatch.after };
+    renderMatch();
+
+    let summaryText = result.summary;
+    if (result.match?.after != null && previousAfter != null && result.match.after !== previousAfter) {
+      summaryText += ` (Job match: ${previousAfter}% -> ${result.match.after}%)`;
+    }
+    appendChatMessage('assistant', summaryText);
   } catch (error) {
     appendChatMessage('assistant', error.message || 'Could not apply that change.');
   } finally {
@@ -903,14 +971,14 @@ downloadOriginal.addEventListener('click', async () => {
 
 async function init() {
   currentDeviceId = await getOrCreateDeviceId();
+  await loadSavedState();
 
   try {
-    await refreshAccount();
+    await restoreServerState();
+    analyzeJob.disabled = !hasResume();
   } catch (error) {
     quotaState.textContent = error.message || 'Could not reach the server.';
   }
-
-  await loadSavedState();
 }
 
 init();

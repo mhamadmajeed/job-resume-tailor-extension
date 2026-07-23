@@ -92,6 +92,32 @@ authed.get('/me', (req, res) => {
   res.json(userSummary(getOrCreateUser(req.deviceId)));
 });
 
+// Everything the popup needs to restore itself when reopened: plan, stored resume,
+// and the most recent generation (with match scores) so nothing "goes away".
+authed.get('/state', (req, res) => {
+  const user = getOrCreateUser(req.deviceId);
+  const resumeRow = db.prepare('SELECT filename, updated_at FROM resumes WHERE user_id = ?').get(req.deviceId);
+  const generation = db.prepare(
+    'SELECT id, job_title, job_url, current_text, match_before, match_after, updated_at FROM generations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1'
+  ).get(req.deviceId);
+
+  res.json({
+    user: userSummary(user),
+    resume: resumeRow ? { filename: resumeRow.filename, updatedAt: resumeRow.updated_at } : null,
+    generation: generation
+      ? {
+          id: generation.id,
+          jobTitle: generation.job_title,
+          jobUrl: generation.job_url,
+          text: applyWatermark(generation.current_text, user.plan === 'pro'),
+          matchBefore: generation.match_before,
+          matchAfter: generation.match_after,
+          updatedAt: generation.updated_at
+        }
+      : null
+  });
+});
+
 authed.post('/resume', (req, res) => {
   getOrCreateUser(req.deviceId);
   const text = String(req.body.resumeText || '').trim();
@@ -120,8 +146,8 @@ authed.post('/generate', asyncRoute(async (req, res) => {
   const generationId = uuid();
   const timestamp = nowIso();
   db.prepare(
-    'INSERT INTO generations (id, user_id, job_title, job_url, current_text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(generationId, req.deviceId, job.title, job.url, result.text, timestamp, timestamp);
+    'INSERT INTO generations (id, user_id, job_title, job_url, job_text, current_text, match_before, match_after, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(generationId, req.deviceId, job.title, job.url, job.text.slice(0, 20000), result.text, result.matchBefore, result.matchAfter, timestamp, timestamp);
 
   db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(req.deviceId);
   const updatedUser = { ...user, generations_used: user.generations_used + 1 };
@@ -130,6 +156,7 @@ authed.post('/generate', asyncRoute(async (req, res) => {
     generationId,
     text: applyWatermark(result.text, updatedUser.plan === 'pro'),
     summary: result.summary,
+    match: { before: result.matchBefore, after: result.matchAfter },
     quota: userSummary(updatedUser)
   });
 }));
@@ -143,16 +170,21 @@ authed.post('/revise', asyncRoute(async (req, res) => {
   const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, req.deviceId);
   if (!generation) return res.status(404).json({ error: 'Generation not found.' });
 
-  const result = await reviseResume(generation.current_text, instruction, process.env.ANTHROPIC_API_KEY);
+  const result = await reviseResume(generation.current_text, instruction, generation.job_text || '', process.env.ANTHROPIC_API_KEY);
   const timestamp = nowIso();
 
-  db.prepare('UPDATE generations SET current_text = ?, updated_at = ? WHERE id = ?').run(result.text, timestamp, generationId);
+  db.prepare('UPDATE generations SET current_text = ?, match_after = COALESCE(?, match_after), updated_at = ? WHERE id = ?')
+    .run(result.text, result.matchAfter, timestamp, generationId);
   db.prepare('INSERT INTO revisions (id, generation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(uuid(), generationId, 'user', instruction, timestamp);
   db.prepare('INSERT INTO revisions (id, generation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(uuid(), generationId, 'assistant', result.summary, timestamp);
 
-  res.json({ text: applyWatermark(result.text, user.plan === 'pro'), summary: result.summary });
+  res.json({
+    text: applyWatermark(result.text, user.plan === 'pro'),
+    summary: result.summary,
+    match: { before: generation.match_before, after: result.matchAfter ?? generation.match_after }
+  });
 }));
 
 authed.post('/checkout', asyncRoute(async (req, res) => {

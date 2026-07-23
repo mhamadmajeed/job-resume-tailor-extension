@@ -29,3 +29,17 @@ if (needsMigration()) {
 
 const schema = readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
 db.exec(schema);
+
+// Additive migrations for databases created before these columns existed.
+// SQLite has no ADD COLUMN IF NOT EXISTS, so ignore the "duplicate column" error.
+for (const statement of [
+  'ALTER TABLE generations ADD COLUMN job_text TEXT',
+  'ALTER TABLE generations ADD COLUMN match_before INTEGER',
+  'ALTER TABLE generations ADD COLUMN match_after INTEGER'
+]) {
+  try {
+    db.exec(statement);
+  } catch (_alreadyExists) {
+    // Column is already there - nothing to do.
+  }
+}

@@ -21,7 +21,10 @@ CREATE TABLE IF NOT EXISTS generations (
   user_id TEXT NOT NULL REFERENCES users(id),
   job_title TEXT,
   job_url TEXT,
+  job_text TEXT,
   current_text TEXT NOT NULL,
+  match_before INTEGER,
+  match_after INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

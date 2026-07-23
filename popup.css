@@ -222,6 +222,39 @@ textarea:focus {
   margin: 0;
 }
 
+.match-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  padding: 8px 10px;
+  background: #eef7f2;
+  border: 1px solid #bfe0cf;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.match-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1f5f5b;
+  line-height: 1.1;
+}
+
+.match-caption {
+  font-size: 10px;
+  color: #5d7a72;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.match-delta {
+  font-size: 10.5px;
+  color: #2e7d4f;
+  margin-top: 2px;
+}
+
 .upsell {
   display: flex;
   align-items: center;

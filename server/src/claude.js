@@ -3,16 +3,30 @@ const ANTHROPIC_VERSION = '2023-06-01';
 
 const RESUME_TOOL = {
   name: 'submit_resume',
-  description: 'Submit the tailored resume text and a short summary of the changes made.',
+  description: 'Submit the tailored resume text, a short summary of the changes made, and job-match scores.',
   input_schema: {
     type: 'object',
     properties: {
       resume_text: { type: 'string', description: 'The full tailored resume text.' },
-      change_summary: { type: 'string', description: 'One or two sentences describing what changed.' }
+      change_summary: { type: 'string', description: 'One or two sentences describing what changed.' },
+      match_before: {
+        type: 'integer', minimum: 0, maximum: 100,
+        description: 'Honest estimate (0-100) of how well the INPUT resume matches the job requirements before your edits.'
+      },
+      match_after: {
+        type: 'integer', minimum: 0, maximum: 100,
+        description: 'Honest estimate (0-100) of how well the SUBMITTED resume matches the job requirements after your edits, using the same rubric as match_before.'
+      }
     },
-    required: ['resume_text', 'change_summary']
+    required: ['resume_text', 'change_summary', 'match_before', 'match_after']
   }
 };
+
+const MATCH_RUBRIC = [
+  'Score job match like a strict ATS/recruiter screen: weigh required skills and tools, seniority, domain experience, and role responsibilities that the resume genuinely evidences.',
+  'Use the SAME rubric for match_before and match_after so the two numbers are comparable.',
+  'Be honest: tailoring wording cannot add missing qualifications, so match_after should only exceed match_before by what better framing of real experience justifies. Never report 100 unless the fit is truly exceptional.'
+].join(' ');
 
 function claudeErrorMessage(status, errorText) {
   if (status === 401 || status === 403) {
@@ -90,6 +104,7 @@ function buildTailoringSystemPrompt() {
     'Make conservative edits only where the original resume provides support. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
     'Update the resume across all relevant parts, including Summary/Profile, Skills, and relevant experience bullets when supported.',
     'Do not add generic notes or explanation sections to the resume.',
+    MATCH_RUBRIC,
     'Call the submit_resume tool with the result. Do not respond with plain text.'
   ].join(' ');
 }
@@ -119,18 +134,29 @@ function buildRevisionSystemPrompt() {
     'You are editing an already-tailored resume based on the user\'s follow-up instruction.',
     'Apply only the requested change. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
     'Keep the rest of the resume text intact unless the instruction implies a broader change.',
+    MATCH_RUBRIC,
+    'match_before is the incoming resume\'s match to the job; match_after is the match after your edit. If no job posting is provided, score against the role the resume is clearly targeting.',
     'Call the submit_resume tool with the result. Do not respond with plain text.'
   ].join(' ');
 }
 
-function buildRevisionUserText(currentText, instruction) {
-  return [
+function buildRevisionUserText(currentText, instruction, jobText) {
+  const parts = [
     'Current resume:',
     currentText,
-    '',
-    'User instruction:',
-    instruction
-  ].join('\n');
+    ''
+  ];
+  if (jobText) {
+    parts.push('Job posting text:', jobText.slice(0, 16000), '');
+  }
+  parts.push('User instruction:', instruction);
+  return parts.join('\n');
+}
+
+function clampScore(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  return Math.max(0, Math.min(100, Math.round(num)));
 }
 
 export async function tailorResume(resume, job, apiKey) {
@@ -141,18 +167,21 @@ export async function tailorResume(resume, job, apiKey) {
   }
   return {
     text: result.resume_text.trim(),
-    summary: result.change_summary || 'Tailored the resume to the job listing.'
+    summary: result.change_summary || 'Tailored the resume to the job listing.',
+    matchBefore: clampScore(result.match_before),
+    matchAfter: clampScore(result.match_after)
   };
 }
 
-export async function reviseResume(currentText, instruction, apiKey) {
-  const data = await callClaudeWithRetry(buildRevisionSystemPrompt(), buildRevisionUserText(currentText, instruction), apiKey);
+export async function reviseResume(currentText, instruction, jobText, apiKey) {
+  const data = await callClaudeWithRetry(buildRevisionSystemPrompt(), buildRevisionUserText(currentText, instruction, jobText), apiKey);
   const result = extractToolInput(data);
   if (!result.resume_text || typeof result.resume_text !== 'string') {
     throw new Error('Claude did not return resume_text.');
   }
   return {
     text: result.resume_text.trim(),
-    summary: result.change_summary || 'Applied the requested change.'
+    summary: result.change_summary || 'Applied the requested change.',
+    matchAfter: clampScore(result.match_after)
   };
 }
