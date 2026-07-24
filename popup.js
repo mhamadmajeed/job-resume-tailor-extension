@@ -19,6 +19,12 @@ const resultPanel = document.querySelector('#resultPanel');
 const progressWrap = document.querySelector('#progressWrap');
 const progressFill = document.querySelector('#progressFill');
 const progressLabel = document.querySelector('#progressLabel');
+const checkMatch = document.querySelector('#checkMatch');
+const matchCheckPanel = document.querySelector('#matchCheckPanel');
+const matchCheckScore = document.querySelector('#matchCheckScore');
+const matchCheckVerdict = document.querySelector('#matchCheckVerdict');
+const matchedChips = document.querySelector('#matchedChips');
+const missingChips = document.querySelector('#missingChips');
 
 let progressTimer = null;
 
@@ -96,6 +102,24 @@ function renderMatch() {
   matchDelta.textContent = before != null && before !== after ? `up from ${before}%` : '';
 }
 
+function renderChipList(container, keywords, chipClass) {
+  container.innerHTML = '';
+  const list = Array.isArray(keywords) ? keywords : [];
+  list.forEach((keyword) => {
+    const chip = document.createElement('span');
+    chip.className = `chip ${chipClass}`;
+    chip.textContent = keyword;
+    container.appendChild(chip);
+  });
+  container.closest('.chip-group').classList.toggle('hidden', !list.length);
+}
+
+function hideMatchCheck() {
+  matchCheckPanel.classList.add('hidden');
+  matchedChips.innerHTML = '';
+  missingChips.innerHTML = '';
+}
+
 // No accounts: a random id is generated once per browser install and sent on every
 // request so the backend can track free-tier usage and Stripe subscription status.
 async function getOrCreateDeviceId() {
@@ -108,6 +132,7 @@ async function getOrCreateDeviceId() {
 
 function setBusy(isBusy) {
   analyzeJob.disabled = isBusy || !hasResume();
+  checkMatch.disabled = isBusy || !hasResume();
   clearResume.disabled = isBusy;
   downloadOriginal.disabled = isBusy || !currentOriginalResume;
   downloadPdf.disabled = isBusy || !resumeDraft.value.trim();
@@ -847,24 +872,25 @@ async function loadSavedState() {
   updateDownloadButtons();
   downloadOriginal.disabled = !currentOriginalResume;
   analyzeJob.disabled = !hasResume();
+  checkMatch.disabled = !hasResume();
 }
 
 async function getActiveJobText() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error('No active tab found.');
 
+  let response = null;
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_JOB_TEXT' });
-    if (response?.ok) return response.job;
+    response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_JOB_TEXT' });
   } catch (_error) {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ['content.js']
     });
+    response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_JOB_TEXT' });
   }
 
-  const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_JOB_TEXT' });
-  if (!response?.ok) throw new Error('Could not read this page.');
+  if (response?.ok !== true) throw new Error(response?.error || 'Could not read this page.');
   return response.job;
 }
 
@@ -894,6 +920,7 @@ resumeFile.addEventListener('change', async () => {
     renderMatch();
     updateDownloadButtons();
     analyzeJob.disabled = false;
+    checkMatch.disabled = false;
     generatedState.textContent = 'Resume saved. Open a job page and click Generate.';
     downloadOriginal.disabled = false;
     saveState.textContent = `On file: ${file.name}`;
@@ -915,13 +942,46 @@ clearResume.addEventListener('click', async () => {
   updateDownloadButtons();
   downloadOriginal.disabled = true;
   analyzeJob.disabled = true;
+  checkMatch.disabled = true;
   saveState.textContent = 'No resume yet';
   jobState.textContent = 'Open a job listing in this tab, then generate.';
   generatedState.textContent = 'No resume generated yet.';
   upsellPanel.classList.add('hidden');
   resultPanel.classList.add('hidden');
+  hideMatchCheck();
   currentMatch = { before: null, after: null };
   renderMatch();
+});
+
+checkMatch.addEventListener('click', async () => {
+  setBusy(true);
+  progressShow('Reading the job page...', 6);
+  progressCrawlTo(18);
+
+  try {
+    const job = await getActiveJobText();
+    progressShow('Scoring your resume against this job...', 25);
+    progressCrawlTo(85);
+
+    const result = await apiFetch('/api/match', {
+      method: 'POST',
+      body: JSON.stringify({ jobTitle: job.title, jobUrl: job.url, jobText: job.text })
+    });
+
+    matchCheckScore.textContent = `${result.match}%`;
+    matchCheckVerdict.textContent = result.verdict || '';
+    renderChipList(matchedChips, result.matchedKeywords, 'ok');
+    renderChipList(missingChips, result.missingKeywords, 'gap');
+    matchCheckPanel.classList.remove('hidden');
+    jobState.textContent = job.title;
+    progressShow('Done', 100);
+    progressHide();
+  } catch (error) {
+    progressHide(0);
+    jobState.textContent = error.message;
+  } finally {
+    setBusy(false);
+  }
 });
 
 analyzeJob.addEventListener('click', async () => {
@@ -961,6 +1021,7 @@ analyzeJob.addEventListener('click', async () => {
     currentMatch = { before: result.match?.before ?? null, after: result.match?.after ?? null };
     renderMatch();
 
+    hideMatchCheck();
     resultPanel.classList.remove('hidden');
     resumeDraft.value = bodyText;
     chatLog.innerHTML = '';
@@ -1096,6 +1157,7 @@ async function init() {
   try {
     await restoreServerState();
     analyzeJob.disabled = !hasResume();
+    checkMatch.disabled = !hasResume();
   } catch (error) {
     quotaState.textContent = error.message || 'Could not reach the server.';
   }

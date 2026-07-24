@@ -317,6 +317,77 @@ button.small {
   transition: width 0.25s ease;
 }
 
+/* ---- Match check ---- */
+
+.match-check {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfdfc;
+}
+
+.match-check-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.match-check-score {
+  font-size: 21px;
+  font-weight: 750;
+  color: var(--accent);
+  line-height: 1.05;
+}
+
+.match-check-verdict {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.chip-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chip-label {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 650;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chip {
+  border-radius: 999px;
+  font-size: 10.5px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+}
+
+.chip.ok {
+  background: var(--accent-soft);
+  border-color: #c3ddd9;
+  color: var(--accent);
+}
+
+.chip.gap {
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-ink);
+}
+
 /* ---- Result ---- */
 
 .result-head {

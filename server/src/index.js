@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { db } from './db.js';
 import { uuid, nowIso, deviceAuth, asyncRoute } from './util.js';
-import { tailorResume, reviseResume } from './claude.js';
+import { tailorResume, reviseResume, scoreMatch } from './claude.js';
 import { createCheckoutSession, verifyStripeWebhook } from './stripe.js';
 
 const app = express();
@@ -159,6 +159,26 @@ authed.post('/generate', asyncRoute(async (req, res) => {
     summary: result.summary,
     match: { before: result.matchBefore, after: result.matchAfter },
     quota: userSummary(updatedUser)
+  });
+}));
+
+// Score-only check: one Claude call, no rewriting, nothing stored, no quota used.
+authed.post('/match', asyncRoute(async (req, res) => {
+  getOrCreateUser(req.deviceId);
+
+  const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(req.deviceId);
+  if (!resumeRow) return res.status(400).json({ error: 'Upload a resume first.' });
+
+  const job = { title: req.body.jobTitle || '', url: req.body.jobUrl || '', text: req.body.jobText || '' };
+  if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
+
+  const result = await scoreMatch(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY);
+
+  res.json({
+    match: result.match,
+    matchedKeywords: result.matchedKeywords,
+    missingKeywords: result.missingKeywords,
+    verdict: result.verdict
   });
 }));
 

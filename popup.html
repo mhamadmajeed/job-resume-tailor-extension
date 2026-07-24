@@ -53,10 +53,18 @@
             <span class="intensity-card"><strong>Max</strong><small>Deep rewrite</small></span>
           </label>
         </div>
-        <button id="analyzeJob" type="button" class="primary big" disabled>Generate tailored PDF</button>
+        <div class="actions">
+          <button id="checkMatch" type="button" class="ghost" disabled>Check match</button>
+          <button id="analyzeJob" type="button" class="primary big" disabled>Generate tailored PDF</button>
+        </div>
         <div id="progressWrap" class="progress hidden">
           <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
           <p id="progressLabel" class="hint"></p>
+        </div>
+        <div id="matchCheckPanel" class="match-check hidden">
+          <div class="match-check-head"><span id="matchCheckScore" class="match-check-score">-</span><p id="matchCheckVerdict" class="match-check-verdict"></p></div>
+          <div class="chip-group"><p class="chip-label">In your resume</p><div id="matchedChips" class="chips"></div></div>
+          <div class="chip-group"><p class="chip-label">Missing from your resume</p><div id="missingChips" class="chips"></div></div>
         </div>
       </section>
 

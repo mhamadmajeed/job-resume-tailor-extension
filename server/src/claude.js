@@ -22,6 +22,33 @@ const RESUME_TOOL = {
   }
 };
 
+const MATCH_TOOL = {
+  name: 'submit_match',
+  description: 'Submit the job-match score, the matched and missing keywords, and a one-sentence verdict.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      match_score: {
+        type: 'integer', minimum: 0, maximum: 100,
+        description: 'Honest estimate (0-100) of how well the resume, as written, matches the job requirements.'
+      },
+      matched_keywords: {
+        type: 'array', items: { type: 'string' }, maxItems: 12,
+        description: 'Up to 12 important job requirements, in the employer\'s exact wording from the posting, that are clearly evidenced in the resume.'
+      },
+      missing_keywords: {
+        type: 'array', items: { type: 'string' }, maxItems: 12,
+        description: 'Up to 12 important job requirements, in the employer\'s exact wording from the posting, that are NOT evidenced in the resume.'
+      },
+      verdict: {
+        type: 'string',
+        description: 'One blunt sentence summing up the fit, e.g. \'Strong fit for the core editing requirements, but lacks the required motion-capture experience.\''
+      }
+    },
+    required: ['match_score', 'matched_keywords', 'missing_keywords', 'verdict']
+  }
+};
+
 const MATCH_RUBRIC = [
   'Score job match like a strict, skeptical recruiter deciding whether to even open this application. Judge primarily against the REQUIRED qualifications: hard skills, tools, years of experience, seniority, domain, and credentials.',
   'Calibration bands - place the score in the right band before fine-tuning it:',
@@ -50,14 +77,14 @@ function claudeErrorMessage(status, errorText) {
   return `Claude request failed (${status}): ${errorText.slice(0, 180)}`;
 }
 
-async function callClaudeWithRetry(systemPrompt, userText, apiKey) {
+async function callClaudeWithRetry(systemPrompt, userText, apiKey, tool = RESUME_TOOL) {
   const body = {
     model: CLAUDE_MODEL,
     max_tokens: 4096,
     system: systemPrompt,
     messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
-    tools: [RESUME_TOOL],
-    tool_choice: { type: 'tool', name: RESUME_TOOL.name }
+    tools: [tool],
+    tool_choice: { type: 'tool', name: tool.name }
   };
 
   const maxAttempts = 3;
@@ -170,6 +197,37 @@ function buildRevisionUserText(currentText, instruction, jobText) {
   return parts.join('\n');
 }
 
+function buildMatchSystemPrompt() {
+  return [
+    'You are a strict, skeptical recruiter screening an application.',
+    'Score the resume AS IT IS against the job posting. Do not rewrite it, and do not assume any tailoring or edits will happen.',
+    MATCH_RUBRIC,
+    'For matched_keywords and missing_keywords, use the employer\'s exact wording from the job posting.',
+    'Call the submit_match tool with the result. Do not respond with plain text.'
+  ].join(' ');
+}
+
+function buildMatchUserText(resume, job) {
+  return [
+    'Original resume:',
+    resume,
+    '',
+    'Job page title:',
+    job.title || '',
+    '',
+    'Job posting text:',
+    (job.text || '').slice(0, 16000)
+  ].join('\n');
+}
+
+function coerceKeywords(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
 function clampScore(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return null;
@@ -200,5 +258,17 @@ export async function reviseResume(currentText, instruction, jobText, apiKey) {
     text: result.resume_text.trim(),
     summary: result.change_summary || 'Applied the requested change.',
     matchAfter: clampScore(result.match_after)
+  };
+}
+
+export async function scoreMatch(resume, job, apiKey) {
+  const data = await callClaudeWithRetry(buildMatchSystemPrompt(), buildMatchUserText(resume, job), apiKey, MATCH_TOOL);
+  const result = extractToolInput(data);
+  const verdict = typeof result.verdict === 'string' ? result.verdict.trim() : '';
+  return {
+    match: clampScore(result.match_score),
+    matchedKeywords: coerceKeywords(result.matched_keywords),
+    missingKeywords: coerceKeywords(result.missing_keywords),
+    verdict: verdict || 'No verdict returned.'
   };
 }
