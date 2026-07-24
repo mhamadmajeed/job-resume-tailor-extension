@@ -202,7 +202,9 @@ function buildMatchSystemPrompt() {
     'You are a strict, skeptical recruiter screening an application.',
     'Score the resume AS IT IS against the job posting. Do not rewrite it, and do not assume any tailoring or edits will happen.',
     MATCH_RUBRIC,
-    'For matched_keywords and missing_keywords, use the employer\'s exact wording from the job posting.',
+    'You MUST populate matched_keywords and missing_keywords - empty arrays are wrong unless the posting genuinely lists no requirements.',
+    'First mentally list every concrete requirement in the posting (skills, tools, credentials, years of experience, domains). Then put each one into matched_keywords if the resume clearly evidences it, or missing_keywords if it does not. Cover all the important requirements, up to 12 per list.',
+    'Use the employer\'s exact wording from the job posting for every keyword (e.g. "Premiere Pro", "3+ years experience", "color grading").',
     'Call the submit_match tool with the result. Do not respond with plain text.'
   ].join(' ');
 }
