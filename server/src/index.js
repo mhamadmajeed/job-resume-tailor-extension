@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { db } from './db.js';
 import { uuid, nowIso, deviceAuth, asyncRoute } from './util.js';
-import { tailorResume, reviseResume, scoreMatch } from './claude.js';
+import { tailorResume, reviseResume, boostResume, scoreMatch } from './claude.js';
 import { createCheckoutSession, verifyStripeWebhook } from './stripe.js';
 
 const app = express();
@@ -205,6 +205,35 @@ authed.post('/revise', asyncRoute(async (req, res) => {
     text: applyWatermark(result.text, user.plan === 'pro'),
     summary: result.summary,
     match: { before: generation.match_before, after: result.matchAfter ?? generation.match_after }
+  });
+}));
+
+authed.post('/boost', asyncRoute(async (req, res) => {
+  const user = getOrCreateUser(req.deviceId);
+  const generationId = String(req.body.generationId || '');
+
+  const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, req.deviceId);
+  if (!generation) return res.status(404).json({ error: 'Generation not found.' });
+
+  const previousAfter = generation.match_after;
+  const result = await boostResume(generation.current_text, generation.job_text || '', previousAfter, process.env.ANTHROPIC_API_KEY);
+  const timestamp = nowIso();
+
+  db.prepare('UPDATE generations SET current_text = ?, match_after = COALESCE(?, match_after), updated_at = ? WHERE id = ?')
+    .run(result.text, result.matchAfter, timestamp, generationId);
+  db.prepare('INSERT INTO revisions (id, generation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(uuid(), generationId, 'user', 'Boost the match higher.', timestamp);
+  db.prepare('INSERT INTO revisions (id, generation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(uuid(), generationId, 'assistant', result.summary, timestamp);
+
+  db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(req.deviceId);
+  const updatedUser = { ...user, generations_used: user.generations_used + 1 };
+
+  res.json({
+    text: applyWatermark(result.text, updatedUser.plan === 'pro'),
+    summary: result.summary,
+    match: { before: previousAfter, after: result.matchAfter ?? previousAfter },
+    quota: userSummary(updatedUser)
   });
 }));
 

@@ -20,6 +20,7 @@ const progressWrap = document.querySelector('#progressWrap');
 const progressFill = document.querySelector('#progressFill');
 const progressLabel = document.querySelector('#progressLabel');
 const checkMatch = document.querySelector('#checkMatch');
+const boostMatch = document.querySelector('#boostMatch');
 const matchCheckPanel = document.querySelector('#matchCheckPanel');
 const matchCheckScore = document.querySelector('#matchCheckScore');
 const matchCheckVerdict = document.querySelector('#matchCheckVerdict');
@@ -130,9 +131,19 @@ async function getOrCreateDeviceId() {
   return deviceId;
 }
 
+function showError(element, message) {
+  element.classList.add('error');
+  element.textContent = message;
+}
+
+function clearError(element) {
+  element.classList.remove('error');
+}
+
 function setBusy(isBusy) {
   analyzeJob.disabled = isBusy || !hasResume();
   checkMatch.disabled = isBusy || !hasResume();
+  boostMatch.disabled = isBusy || !currentGeneratedResume;
   clearResume.disabled = isBusy;
   downloadOriginal.disabled = isBusy || !currentOriginalResume;
   downloadPdf.disabled = isBusy || !resumeDraft.value.trim();
@@ -955,6 +966,7 @@ clearResume.addEventListener('click', async () => {
 
 checkMatch.addEventListener('click', async () => {
   setBusy(true);
+  clearError(jobState);
   progressShow('Reading the job page...', 6);
   progressCrawlTo(18);
 
@@ -978,7 +990,7 @@ checkMatch.addEventListener('click', async () => {
     progressHide();
   } catch (error) {
     progressHide(0);
-    jobState.textContent = error.message;
+    showError(jobState, error.message || 'Could not check the match.');
   } finally {
     setBusy(false);
   }
@@ -992,6 +1004,7 @@ analyzeJob.addEventListener('click', async () => {
   }
 
   setBusy(true);
+  clearError(jobState);
   jobState.textContent = 'Working...';
   progressShow('Reading the job page...', 6);
   progressCrawlTo(18);
@@ -1042,7 +1055,57 @@ analyzeJob.addEventListener('click', async () => {
     generatedState.textContent = `PDF saved to your Downloads.${matchNote} Refine below and it re-downloads.`;
   } catch (error) {
     progressHide(0);
-    jobState.textContent = error.message || 'Unable to tailor this page';
+    showError(jobState, error.message || 'Unable to tailor this page');
+  } finally {
+    setBusy(false);
+  }
+});
+
+boostMatch.addEventListener('click', async () => {
+  if (!currentGeneratedResume) return;
+
+  setBusy(true);
+  clearError(generatedState);
+  progressShow('Boosting your match...', 8);
+  progressCrawlTo(85);
+
+  try {
+    const result = await apiFetch('/api/boost', {
+      method: 'POST',
+      body: JSON.stringify({ generationId: currentGeneratedResume.id })
+    });
+
+    const body = stripWatermark(result.text);
+    currentGeneratedResume.text = body;
+    resumeDraft.value = body;
+    updateDownloadButtons();
+
+    const prevAfter = currentMatch.after;
+    currentMatch = { before: currentMatch.before, after: result.match?.after ?? currentMatch.after };
+    renderMatch();
+    if (result.quota) {
+      currentQuota = result.quota;
+      renderQuota();
+    }
+    maybeShowUpsell();
+
+    progressShow('Building your PDF...', 90);
+    const pdfBlob = await buildDesignedPdfBlob(body, watermarkLineForPlan());
+    await downloadBlob(pdfBlob, currentGeneratedResume.filename);
+
+    progressShow('Done - boosted PDF saved', 100);
+    progressHide();
+
+    const scoreNote = result.match?.after != null && prevAfter != null && result.match.after !== prevAfter
+      ? ` (Job match: ${prevAfter}% -> ${result.match.after}%)`
+      : '';
+    appendChatMessage('assistant', `${result.summary || 'Boosted the resume.'}${scoreNote} Updated PDF saved to your Downloads.`);
+    generatedState.textContent = result.match?.after != null && prevAfter != null && result.match.after > prevAfter
+      ? `Boosted from ${prevAfter}% to ${result.match.after}%. PDF saved to your Downloads.`
+      : 'Boost applied. PDF saved to your Downloads.';
+  } catch (error) {
+    progressHide(0);
+    showError(generatedState, error.message || 'Could not boost the resume.');
   } finally {
     setBusy(false);
   }

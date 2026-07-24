@@ -139,6 +139,19 @@ body {
   display: none !important;
 }
 
+.hint.error {
+  color: #a33b2e;
+}
+
+button:focus-visible,
+.file-picker:focus-within,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* ---- Buttons ---- */
 
 button {
@@ -374,6 +387,12 @@ button.small {
   font-size: 10.5px;
   padding: 3px 9px;
   border: 1px solid var(--line);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.chat-message {
+  overflow-wrap: anywhere;
 }
 
 .chip.ok {
@@ -445,6 +464,24 @@ button.small {
 
 .actions .primary {
   flex: 1;
+}
+
+/* ---- Boost ---- */
+
+button.boost {
+  width: 100%;
+  background: var(--accent-soft);
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-weight: 650;
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+
+button.boost:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 /* ---- Upsell ---- */

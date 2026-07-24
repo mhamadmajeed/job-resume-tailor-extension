@@ -135,6 +135,11 @@ function extractToolInput(data) {
   return toolUse.input;
 }
 
+const OUTPUT_HYGIENE = [
+  'Preserve every link, URL, email address, and phone number from the resume exactly as written - never drop, shorten, alter, or invent contact details or links.',
+  'Output clean plain text only: no markdown syntax (no asterisks, hashes, or backticks), no decorative separator lines, no notes or commentary - only the resume content itself.'
+].join(' ');
+
 const INTENSITY_GUIDANCE = {
   minimal: 'Editing intensity: LIGHT. Make the fewest edits possible: tune the summary, reorder emphasis, and adjust the skills list. Keep almost all original sentences as written; only touch bullets where a small wording change clearly helps. Expect a modest match improvement.',
   balanced: 'Editing intensity: MEDIUM. Rewrite where it helps: rework the summary, skills, and the most relevant experience bullets, while leaving already-strong content alone.',
@@ -153,6 +158,7 @@ function buildTailoringSystemPrompt(intensity) {
     'Make conservative edits only where the original resume provides support. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
     'Update the resume across all relevant parts, including Summary/Profile, Skills, and relevant experience bullets when supported.',
     'Do not add generic notes or explanation sections to the resume.',
+    OUTPUT_HYGIENE,
     MATCH_RUBRIC,
     'Call the submit_resume tool with the result. Do not respond with plain text.'
   ].join(' ');
@@ -183,6 +189,7 @@ function buildRevisionSystemPrompt() {
     'You are editing an already-tailored resume based on the user\'s follow-up instruction.',
     'Apply only the requested change. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
     'Keep the rest of the resume text intact unless the instruction implies a broader change.',
+    OUTPUT_HYGIENE,
     MATCH_RUBRIC,
     'match_before is the incoming resume\'s match to the job; match_after is the match after your edit. If no job posting is provided, score against the role the resume is clearly targeting.',
     'Call the submit_resume tool with the result. Do not respond with plain text.'
@@ -263,6 +270,45 @@ export async function reviseResume(currentText, instruction, jobText, apiKey) {
   return {
     text: result.resume_text.trim(),
     summary: result.change_summary || 'Applied the requested change.',
+    matchAfter: clampScore(result.match_after)
+  };
+}
+
+function buildBoostSystemPrompt(currentScore) {
+  return [
+    'You are an expert resume strategist and ATS-aware editor.',
+    `The resume below was ALREADY tailored to the job posting and currently scores ${currentScore != null ? `${currentScore}%` : 'an unknown match'}.`,
+    INTENSITY_GUIDANCE.max,
+    'Your goal is to push the honest match score higher than the current score by reworking wording, emphasis, and ordering of the candidate\'s real experience.',
+    'Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
+    'If nothing more can honestly be improved, return the resume nearly unchanged with the same score and say so in change_summary.',
+    OUTPUT_HYGIENE,
+    MATCH_RUBRIC,
+    'match_before is the incoming resume\'s current score; match_after is the score after your boost.',
+    'Call the submit_resume tool with the result. Do not respond with plain text.'
+  ].join(' ');
+}
+
+function buildBoostUserText(currentText, jobText) {
+  return [
+    'Current tailored resume:',
+    currentText,
+    '',
+    'Job posting text:',
+    (jobText || '').slice(0, 16000)
+  ].join('\n');
+}
+
+export async function boostResume(currentText, jobText, currentScore, apiKey) {
+  const data = await callClaudeWithRetry(buildBoostSystemPrompt(currentScore), buildBoostUserText(currentText, jobText), apiKey);
+  const result = extractToolInput(data);
+  if (!result.resume_text || typeof result.resume_text !== 'string') {
+    throw new Error('Claude did not return resume_text.');
+  }
+  return {
+    text: result.resume_text.trim(),
+    summary: result.change_summary || 'Boosted the resume toward the job requirements.',
+    matchBefore: clampScore(result.match_before),
     matchAfter: clampScore(result.match_after)
   };
 }
