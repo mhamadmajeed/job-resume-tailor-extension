@@ -24,7 +24,7 @@ const RESUME_TOOL = {
 
 const MATCH_TOOL = {
   name: 'submit_match',
-  description: 'Submit the job-match score, the matched and missing keywords, and a one-sentence verdict.',
+  description: 'Submit the job-match score, the full requirements checklist, and a one-sentence verdict.',
   input_schema: {
     type: 'object',
     properties: {
@@ -32,20 +32,25 @@ const MATCH_TOOL = {
         type: 'integer', minimum: 0, maximum: 100,
         description: 'Honest estimate (0-100) of how well the resume, as written, matches the job requirements.'
       },
-      matched_keywords: {
-        type: 'array', items: { type: 'string' }, maxItems: 12,
-        description: 'Up to 12 important job requirements, in the employer\'s exact wording from the posting, that are clearly evidenced in the resume.'
-      },
-      missing_keywords: {
-        type: 'array', items: { type: 'string' }, maxItems: 12,
-        description: 'Up to 12 important job requirements, in the employer\'s exact wording from the posting, that are NOT evidenced in the resume.'
+      requirements: {
+        type: 'array',
+        maxItems: 20,
+        description: 'EVERY concrete requirement in the posting (skills, tools, credentials, years of experience, domain), each marked as evidenced or not. This list must never be empty unless the posting truly lists no requirements.',
+        items: {
+          type: 'object',
+          properties: {
+            keyword: { type: 'string', description: 'The requirement in the employer\'s exact wording, e.g. "Premiere Pro", "3+ years experience", "color grading".' },
+            evidenced: { type: 'boolean', description: 'true if the resume clearly evidences this requirement, false if it does not.' }
+          },
+          required: ['keyword', 'evidenced']
+        }
       },
       verdict: {
         type: 'string',
         description: 'One blunt sentence summing up the fit, e.g. \'Strong fit for the core editing requirements, but lacks the required motion-capture experience.\''
       }
     },
-    required: ['match_score', 'matched_keywords', 'missing_keywords', 'verdict']
+    required: ['match_score', 'requirements', 'verdict']
   }
 };
 
@@ -202,8 +207,7 @@ function buildMatchSystemPrompt() {
     'You are a strict, skeptical recruiter screening an application.',
     'Score the resume AS IT IS against the job posting. Do not rewrite it, and do not assume any tailoring or edits will happen.',
     MATCH_RUBRIC,
-    'You MUST populate matched_keywords and missing_keywords - empty arrays are wrong unless the posting genuinely lists no requirements.',
-    'First mentally list every concrete requirement in the posting (skills, tools, credentials, years of experience, domains). Then put each one into matched_keywords if the resume clearly evidences it, or missing_keywords if it does not. Cover all the important requirements, up to 12 per list.',
+    'Fill the requirements checklist completely: go through the posting and add EVERY concrete requirement (skills, tools, credentials, years of experience, domain) as its own entry, marking evidenced true when the resume clearly shows it and false when it does not. An empty checklist is wrong unless the posting genuinely lists no requirements.',
     'Use the employer\'s exact wording from the job posting for every keyword (e.g. "Premiere Pro", "3+ years experience", "color grading").',
     'Call the submit_match tool with the result. Do not respond with plain text.'
   ].join(' ');
@@ -267,10 +271,15 @@ export async function scoreMatch(resume, job, apiKey) {
   const data = await callClaudeWithRetry(buildMatchSystemPrompt(), buildMatchUserText(resume, job), apiKey, MATCH_TOOL);
   const result = extractToolInput(data);
   const verdict = typeof result.verdict === 'string' ? result.verdict.trim() : '';
+
+  const requirements = Array.isArray(result.requirements) ? result.requirements : [];
+  const matched = requirements.filter((item) => item && item.evidenced === true).map((item) => item.keyword);
+  const missing = requirements.filter((item) => item && item.evidenced !== true).map((item) => item.keyword);
+
   return {
     match: clampScore(result.match_score),
-    matchedKeywords: coerceKeywords(result.matched_keywords),
-    missingKeywords: coerceKeywords(result.missing_keywords),
+    matchedKeywords: coerceKeywords(matched),
+    missingKeywords: coerceKeywords(missing),
     verdict: verdict || 'No verdict returned.'
   };
 }
