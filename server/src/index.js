@@ -166,7 +166,7 @@ authed.post('/generate', asyncRoute(async (req, res) => {
   const job = { title: req.body.jobTitle || '', url: req.body.jobUrl || '', text: req.body.jobText || '' };
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
 
-  const intensity = ['minimal', 'balanced', 'max'].includes(req.body.intensity) ? req.body.intensity : 'balanced';
+  const intensity = ['minimal', 'balanced', 'max', 'ultra'].includes(req.body.intensity) ? req.body.intensity : 'balanced';
 
   // Single source of truth for the before-score: reuse the cached Check-match result
   // for this exact job, or run the same score-only pass now. The tailoring call is

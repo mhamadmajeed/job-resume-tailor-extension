@@ -143,13 +143,23 @@ const OUTPUT_HYGIENE = [
 const INTENSITY_GUIDANCE = {
   minimal: 'Editing intensity: LIGHT. Make the fewest edits possible: tune the summary, reorder emphasis, and adjust the skills list. Keep almost all original sentences as written; only touch bullets where a small wording change clearly helps. Expect a modest match improvement.',
   balanced: 'Editing intensity: MEDIUM. Rewrite where it helps: rework the summary, skills, and the most relevant experience bullets, while leaving already-strong content alone.',
-  max: 'Editing intensity: MAXIMUM. Rework wording across every section: reframe all relevant experience toward this role, expand the most relevant bullets, condense or trim less relevant ones, and make the whole resume read as purpose-built for this job. Push the match as high as the candidate\'s real experience allows - but never invent facts.'
+  max: 'Editing intensity: MAXIMUM. Rework wording across every section: reframe all relevant experience toward this role, expand the most relevant bullets, condense or trim less relevant ones, and make the whole resume read as purpose-built for this job. Push the match as high as the candidate\'s real experience allows - but never invent facts.',
+  ultra: [
+    'Editing intensity: ULTRA - full ground-up rewrite with the most aggressive favorable framing possible.',
+    'Rebuild the resume from scratch around this job: restructure and reorder sections freely, retitle roles to the employer\'s terminology whenever the actual work supports it, and lead every section with whatever maps hardest onto the posting\'s requirements.',
+    'Use the strongest defensible phrasing everywhere: present real experience at the very top of its plausible range, claim "working knowledge of" or "familiarity with" tools and skills genuinely adjacent to ones the candidate demonstrably used, and convert modest bullets into confident, outcome-focused ones.',
+    'Stretch framing to the edge of what the underlying experience can support - but do not cross into fabrication: never invent employers, job titles with no basis, dates, degrees, certifications, licenses, or specific tools/metrics the resume gives no basis for. An exaggeration the candidate cannot back up in an interview hurts them.',
+    'Because this is a full rewrite of undersold experience, the honest match lift may exceed the typical range - larger gains are acceptable when the rewrite genuinely surfaces buried relevant experience.'
+  ].join(' ')
 };
 
 function buildTailoringSystemPrompt(intensity, anchoredBefore) {
   const anchor = anchoredBefore != null
     ? `The original resume's match score has already been measured as ${anchoredBefore}% under this exact rubric. Set match_before to exactly ${anchoredBefore}. Score match_after with the same rubric, treating ${anchoredBefore}% as the honest starting point.`
     : '';
+  const structureRule = intensity === 'ultra'
+    ? 'You may restructure freely: change section order, headings, and bullet organization to whatever presents the candidate best for this job. Keep every real job, employer, and date.'
+    : 'Preserve the candidate resume structure: same section order, same major headings, same jobs, same dates, and similar bullet/list organization.';
   return [
     'You are an expert resume strategist and ATS-aware editor.',
     INTENSITY_GUIDANCE[intensity] || INTENSITY_GUIDANCE.balanced,
@@ -158,8 +168,10 @@ function buildTailoringSystemPrompt(intensity, anchoredBefore) {
     'Then match the resume to that role by emphasizing the candidate experience that is already supported by the original resume.',
     'Mirror the job posting\'s exact terminology: when the resume describes the same skill, tool, role, or activity using a synonym, switch to the employer\'s wording. For example, if the posting says "cinematographer" and the resume says "videographer", write "cinematographer"; if the posting says "stakeholders" and the resume says "clients", prefer "stakeholders". Apply this to titles, skills, and bullet wording - but only when the two terms genuinely describe the same experience. Never relabel experience as something it is not.',
     'Do not extract, list, or paste keywords. Do not keyword-stuff. Rewrite naturally so the resume reads as if it was originally written for this target role.',
-    'Preserve the candidate resume structure: same section order, same major headings, same jobs, same dates, and similar bullet/list organization.',
-    'Make conservative edits only where the original resume provides support. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
+    structureRule,
+    intensity === 'ultra'
+      ? 'Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.'
+      : 'Make conservative edits only where the original resume provides support. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
     'Update the resume across all relevant parts, including Summary/Profile, Skills, and relevant experience bullets when supported.',
     'Do not add generic notes or explanation sections to the resume.',
     OUTPUT_HYGIENE,

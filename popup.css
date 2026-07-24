@@ -263,8 +263,8 @@ button.small {
 
 .intensity {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 7px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
 }
 
 .intensity-option input {
