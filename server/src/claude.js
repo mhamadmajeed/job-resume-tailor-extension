@@ -146,10 +146,14 @@ const INTENSITY_GUIDANCE = {
   max: 'Editing intensity: MAXIMUM. Rework wording across every section: reframe all relevant experience toward this role, expand the most relevant bullets, condense or trim less relevant ones, and make the whole resume read as purpose-built for this job. Push the match as high as the candidate\'s real experience allows - but never invent facts.'
 };
 
-function buildTailoringSystemPrompt(intensity) {
+function buildTailoringSystemPrompt(intensity, anchoredBefore) {
+  const anchor = anchoredBefore != null
+    ? `The original resume's match score has already been measured as ${anchoredBefore}% under this exact rubric. Set match_before to exactly ${anchoredBefore}. Score match_after with the same rubric, treating ${anchoredBefore}% as the honest starting point.`
+    : '';
   return [
     'You are an expert resume strategist and ATS-aware editor.',
     INTENSITY_GUIDANCE[intensity] || INTENSITY_GUIDANCE.balanced,
+    anchor,
     'Study the full job listing before editing. Infer the role type, seniority, core responsibilities, required qualifications, preferred qualifications, tools/platforms, soft skills, and employer priorities.',
     'Then match the resume to that role by emphasizing the candidate experience that is already supported by the original resume.',
     'Mirror the job posting\'s exact terminology: when the resume describes the same skill, tool, role, or activity using a synonym, switch to the employer\'s wording. For example, if the posting says "cinematographer" and the resume says "videographer", write "cinematographer"; if the posting says "stakeholders" and the resume says "clients", prefer "stakeholders". Apply this to titles, skills, and bullet wording - but only when the two terms genuinely describe the same experience. Never relabel experience as something it is not.',
@@ -247,8 +251,8 @@ function clampScore(value) {
   return Math.max(0, Math.min(100, Math.round(num)));
 }
 
-export async function tailorResume(resume, job, apiKey, intensity = 'balanced') {
-  const data = await callClaudeWithRetry(buildTailoringSystemPrompt(intensity), buildTailoringUserText(resume, job), apiKey);
+export async function tailorResume(resume, job, apiKey, intensity = 'balanced', anchoredBefore = null) {
+  const data = await callClaudeWithRetry(buildTailoringSystemPrompt(intensity, anchoredBefore), buildTailoringUserText(resume, job), apiKey);
   const result = extractToolInput(data);
   if (!result.resume_text || typeof result.resume_text !== 'string') {
     throw new Error('Claude did not return resume_text.');

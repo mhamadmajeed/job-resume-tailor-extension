@@ -37,5 +37,13 @@ CREATE TABLE IF NOT EXISTS revisions (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS match_checks (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  job_hash TEXT NOT NULL,
+  score INTEGER NOT NULL,
+  checked_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, job_hash)
+);
+
 CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id);
 CREATE INDEX IF NOT EXISTS idx_revisions_generation ON revisions(generation_id);

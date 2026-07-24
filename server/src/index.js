@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { createHash } from 'node:crypto';
 import express from 'express';
 import { db } from './db.js';
 import { uuid, nowIso, deviceAuth, asyncRoute } from './util.js';
@@ -83,6 +84,27 @@ function applyWatermark(text, isPro) {
   return isPro ? text : `${text}${WATERMARK}`;
 }
 
+// Check-match and generate must agree on the "before" score, so check results are
+// cached per (user, job) and generate reuses them as its baseline. The hash ignores
+// whitespace/case noise so re-extracting the same posting maps to the same entry.
+function jobHash(jobText) {
+  const normalized = String(jobText || '').slice(0, 16000).toLowerCase().replace(/\s+/g, ' ').trim();
+  return createHash('sha256').update(normalized).digest('hex');
+}
+
+function saveMatchCheck(userId, jobText, score) {
+  if (score == null) return;
+  db.prepare(
+    `INSERT INTO match_checks (user_id, job_hash, score, checked_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, job_hash) DO UPDATE SET score = excluded.score, checked_at = excluded.checked_at`
+  ).run(userId, jobHash(jobText), score, nowIso());
+}
+
+function getCachedMatchScore(userId, jobText) {
+  const row = db.prepare('SELECT score FROM match_checks WHERE user_id = ? AND job_hash = ?').get(userId, jobHash(jobText));
+  return row ? row.score : null;
+}
+
 // ---- Authenticated (device-id) API - no accounts, no sign-in ----
 
 const authed = express.Router();
@@ -129,6 +151,9 @@ authed.post('/resume', (req, res) => {
      ON CONFLICT(user_id) DO UPDATE SET filename = excluded.filename, resume_text = excluded.resume_text, updated_at = excluded.updated_at`
   ).run(req.deviceId, filename, text, nowIso());
 
+  // A different resume invalidates every cached check score.
+  db.prepare('DELETE FROM match_checks WHERE user_id = ?').run(req.deviceId);
+
   res.json({ ok: true });
 });
 
@@ -142,13 +167,26 @@ authed.post('/generate', asyncRoute(async (req, res) => {
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
 
   const intensity = ['minimal', 'balanced', 'max'].includes(req.body.intensity) ? req.body.intensity : 'balanced';
-  const result = await tailorResume(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY, intensity);
+
+  // Single source of truth for the before-score: reuse the cached Check-match result
+  // for this exact job, or run the same score-only pass now. The tailoring call is
+  // then anchored to it, so Check match and Generate can never disagree.
+  let anchoredBefore = getCachedMatchScore(req.deviceId, job.text);
+  if (anchoredBefore == null) {
+    const check = await scoreMatch(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY);
+    anchoredBefore = check.match;
+    saveMatchCheck(req.deviceId, job.text, anchoredBefore);
+  }
+
+  const result = await tailorResume(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY, intensity, anchoredBefore);
+  const matchBefore = anchoredBefore ?? result.matchBefore;
+  const matchAfter = result.matchAfter;
 
   const generationId = uuid();
   const timestamp = nowIso();
   db.prepare(
     'INSERT INTO generations (id, user_id, job_title, job_url, job_text, current_text, match_before, match_after, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(generationId, req.deviceId, job.title, job.url, job.text.slice(0, 20000), result.text, result.matchBefore, result.matchAfter, timestamp, timestamp);
+  ).run(generationId, req.deviceId, job.title, job.url, job.text.slice(0, 20000), result.text, matchBefore, matchAfter, timestamp, timestamp);
 
   db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(req.deviceId);
   const updatedUser = { ...user, generations_used: user.generations_used + 1 };
@@ -157,7 +195,7 @@ authed.post('/generate', asyncRoute(async (req, res) => {
     generationId,
     text: applyWatermark(result.text, updatedUser.plan === 'pro'),
     summary: result.summary,
-    match: { before: result.matchBefore, after: result.matchAfter },
+    match: { before: matchBefore, after: matchAfter },
     quota: userSummary(updatedUser)
   });
 }));
@@ -173,6 +211,7 @@ authed.post('/match', asyncRoute(async (req, res) => {
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
 
   const result = await scoreMatch(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY);
+  saveMatchCheck(req.deviceId, job.text, result.match);
 
   res.json({
     match: result.match,
