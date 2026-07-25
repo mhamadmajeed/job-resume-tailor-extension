@@ -8,7 +8,7 @@ import { createCheckoutSession, verifyStripeWebhook } from './stripe.js';
 
 const app = express();
 const PORT = process.env.PORT || 8787;
-const WATERMARK = '\n\n---\nMade with Job Resume Tailor (Free plan) - upgrade to remove this line.';
+
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -61,17 +61,37 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const PERIOD_DAYS = 30;
+
+function planLimit(plan) {
+  return plan === 'pro' ? Number(process.env.PRO_GENERATION_LIMIT || 100) : Number(process.env.FREE_GENERATION_LIMIT || 5);
+}
+
+// Rolls the 30-day usage window for every plan, resetting the counter when a new
+// period starts.
+function refreshQuotaPeriod(user) {
+  const daysElapsed = (Date.now() - new Date(user.period_start).getTime()) / (1000 * 60 * 60 * 24);
+  if (daysElapsed < PERIOD_DAYS) return user;
+
+  const period_start = nowIso();
+  db.prepare('UPDATE users SET generations_used = 0, period_start = ? WHERE id = ?').run(period_start, user.id);
+  return { ...user, generations_used: 0, period_start };
+}
+
 function userSummary(user) {
+  const limit = planLimit(user.plan);
   return {
     plan: user.plan,
     isPro: user.plan === 'pro',
-    generationsUsed: user.generations_used
+    generationsUsed: user.generations_used,
+    limit,
+    remaining: Math.max(0, limit - user.generations_used)
   };
 }
 
 function getOrCreateUser(deviceId) {
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(deviceId);
-  if (existing) return existing;
+  if (existing) return refreshQuotaPeriod(existing);
 
   const user = { id: deviceId, plan: 'free', generations_used: 0, period_start: nowIso(), created_at: nowIso() };
   db.prepare(
@@ -80,8 +100,10 @@ function getOrCreateUser(deviceId) {
   return user;
 }
 
-function applyWatermark(text, isPro) {
-  return isPro ? text : `${text}${WATERMARK}`;
+function quotaExceededError(user) {
+  return user.plan === 'pro'
+    ? 'You have used all 100 generations for this billing period.'
+    : 'Free plan limit reached (5 tailored resumes this month). Upgrade to Pro for 100 a month.';
 }
 
 // Check-match and generate must agree on the "before" score, so check results are
@@ -131,7 +153,7 @@ authed.get('/state', (req, res) => {
           id: generation.id,
           jobTitle: generation.job_title,
           jobUrl: generation.job_url,
-          text: applyWatermark(generation.current_text, user.plan === 'pro'),
+          text: generation.current_text,
           matchBefore: generation.match_before,
           matchAfter: generation.match_after,
           updatedAt: generation.updated_at
@@ -159,6 +181,9 @@ authed.post('/resume', (req, res) => {
 
 authed.post('/generate', asyncRoute(async (req, res) => {
   const user = getOrCreateUser(req.deviceId);
+  if (user.generations_used >= planLimit(user.plan)) {
+    return res.status(402).json({ error: quotaExceededError(user), quota: userSummary(user) });
+  }
 
   const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(req.deviceId);
   if (!resumeRow) return res.status(400).json({ error: 'Upload a resume first.' });
@@ -193,7 +218,7 @@ authed.post('/generate', asyncRoute(async (req, res) => {
 
   res.json({
     generationId,
-    text: applyWatermark(result.text, updatedUser.plan === 'pro'),
+    text: result.text,
     summary: result.summary,
     match: { before: matchBefore, after: matchAfter },
     quota: userSummary(updatedUser)
@@ -241,7 +266,7 @@ authed.post('/revise', asyncRoute(async (req, res) => {
     .run(uuid(), generationId, 'assistant', result.summary, timestamp);
 
   res.json({
-    text: applyWatermark(result.text, user.plan === 'pro'),
+    text: result.text,
     summary: result.summary,
     match: { before: generation.match_before, after: result.matchAfter ?? generation.match_after }
   });
@@ -249,6 +274,9 @@ authed.post('/revise', asyncRoute(async (req, res) => {
 
 authed.post('/boost', asyncRoute(async (req, res) => {
   const user = getOrCreateUser(req.deviceId);
+  if (user.generations_used >= planLimit(user.plan)) {
+    return res.status(402).json({ error: quotaExceededError(user), quota: userSummary(user) });
+  }
   const generationId = String(req.body.generationId || '');
 
   const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, req.deviceId);
@@ -269,7 +297,7 @@ authed.post('/boost', asyncRoute(async (req, res) => {
   const updatedUser = { ...user, generations_used: user.generations_used + 1 };
 
   res.json({
-    text: applyWatermark(result.text, updatedUser.plan === 'pro'),
+    text: result.text,
     summary: result.summary,
     match: { before: previousAfter, after: result.matchAfter ?? previousAfter },
     quota: userSummary(updatedUser)

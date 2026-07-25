@@ -53,11 +53,9 @@ function progressHide(delayMs = 1200) {
   setTimeout(() => progressWrap.classList.add('hidden'), delayMs);
 }
 
-// The server appends this line to free-plan text. The popup strips it from the
-// editable text and instead renders it as a styled footer in the PDF/DOCX, so the
-// document looks clean and the watermark can't be deleted from the editor.
+// Watermarks are gone entirely - free vs pro is now a monthly generation quota.
+// stripWatermark stays as a harmless cleaner for any legacy stored text.
 const WATERMARK_MARKER = 'Made with Job Resume Tailor';
-const WATERMARK_LINE = 'Made with Job Resume Tailor (Free plan) - upgrade to remove this line.';
 
 function stripWatermark(text) {
   const idx = text.lastIndexOf(WATERMARK_MARKER);
@@ -66,7 +64,7 @@ function stripWatermark(text) {
 }
 
 function watermarkLineForPlan() {
-  return currentQuota?.isPro ? '' : WATERMARK_LINE;
+  return '';
 }
 const chatLog = document.querySelector('#chatLog');
 const chatInput = document.querySelector('#chatInput');
@@ -200,10 +198,18 @@ function renderQuota() {
   }
   const isPro = currentQuota.isPro;
   accountState.textContent = isPro ? 'Pro plan' : 'Free plan';
-  const used = currentQuota.generationsUsed;
-  quotaState.textContent = used > 0 ? `${used} generated` : '';
+  if (currentQuota.limit != null) {
+    quotaState.textContent = `${currentQuota.remaining} of ${currentQuota.limit} left this month`;
+  } else {
+    quotaState.textContent = '';
+  }
 
-  // Only pitch the upgrade after they've actually seen a watermarked result, not upfront.
+  const upsellText = document.querySelector('#upsellText');
+  if (upsellText && currentQuota.limit != null) {
+    upsellText.textContent = `Free plan: ${currentQuota.remaining} of ${currentQuota.limit} tailored resumes left this month.`;
+  }
+
+  // Only pitch the upgrade after they've seen a result, never upfront.
   if (isPro) upsellPanel.classList.add('hidden');
 }
 
