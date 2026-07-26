@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>store shot</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  body { width: 1280px; height: 800px; overflow: hidden; background: #0a0e1a;
+         font-family: "Segoe UI", system-ui, sans-serif; position: relative; }
+  .glow-a, .glow-b { position: absolute; border-radius: 50%; filter: blur(90px); }
+  .glow-a { width: 640px; height: 640px; right: -160px; top: -220px; background: rgba(124,92,255,0.30); }
+  .glow-b { width: 520px; height: 520px; left: -140px; bottom: -220px; background: rgba(34,211,238,0.22); }
+  .wrap { position: relative; z-index: 1; display: flex; align-items: center;
+          justify-content: space-between; height: 100%; padding: 0 90px 0 80px; }
+  .copy { max-width: 560px; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 46px; }
+  .brand img { width: 44px; height: 44px; border-radius: 10px; }
+  .brand span { color: #eef1f8; font-size: 22px; font-weight: 700; }
+  h1 { color: #eef1f8; font-size: 52px; font-weight: 800; line-height: 1.12; margin-bottom: 22px; }
+  h1 em { font-style: normal; background: linear-gradient(135deg, #7c5cff, #22d3ee);
+          -webkit-background-clip: text; background-clip: text; color: transparent; }
+  p.sub { color: #97a1b8; font-size: 20px; line-height: 1.5; }
+  .device { width: 424px; border-radius: 22px; padding: 12px;
+            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: 0 40px 90px rgba(0,0,0,0.55); }
+  .device iframe { width: 400px; height: 690px; border: 0; border-radius: 14px; background: #0a0e1a; }
+</style>
+</head>
+<body>
+<div class="glow-a"></div><div class="glow-b"></div>
+<div class="wrap">
+  <div class="copy">
+    <div class="brand"><img src="icon128.png" alt=""><span>ResumePilot</span></div>
+    <h1 id="headline"></h1>
+    <p class="sub" id="subline"></p>
+  </div>
+  <div class="device"><iframe id="popup" src="../popup.html"></iframe></div>
+</div>
+<script>
+const FRAMES = {
+  a: {
+    headline: 'Tailor your resume to <em>any job</em> in one click',
+    subline: 'Open a job posting, pick how deep the rewrite goes, and get a polished PDF in seconds.'
+  },
+  b: {
+    headline: 'Watch your match score <em>jump</em>',
+    subline: 'Boost pushes it higher. Refine with AI chat until every line earns its place.'
+  },
+  c: {
+    headline: 'See what is <em>missing</em> before you apply',
+    subline: 'Free match check shows which keywords you have and which ones the job wants.'
+  }
+};
+
+const params = new URLSearchParams(location.search);
+const frame = params.get('frame') || 'a';
+// Fit the fixed 1280x800 design inside a shorter viewport; the crop step
+// rescales the captured region back to exactly 1280x800.
+const scale = parseFloat(params.get('scale') || '1');
+if (scale !== 1) {
+  document.body.style.transform = `scale(${scale})`;
+  document.body.style.transformOrigin = 'top left';
+}
+document.querySelector('#headline').innerHTML = FRAMES[frame].headline;
+document.querySelector('#subline').textContent = FRAMES[frame].subline;
+
+const iframe = document.querySelector('#popup');
+iframe.addEventListener('load', () => {
+  const d = iframe.contentDocument;
+  const $ = (sel) => d.querySelector(sel);
+  const show = (sel) => $(sel) && $(sel).classList.remove('hidden');
+  const hide = (sel) => $(sel) && $(sel).classList.add('hidden');
+
+  // Shared staging: signed-in Elite account with a resume on file.
+  d.documentElement.style.overflow = 'hidden';
+  d.body.style.overflow = 'hidden';
+  hide('#signinPanel');
+  $('#accountState').textContent = 'Elite plan - alex@gmail.com';
+  $('#quotaState').textContent = '463 credits';
+  $('.file-cta').textContent = 'Upload new resume';
+  $('#saveState').textContent = 'On file: Alex-Rivera-Resume.pdf';
+  $('#downloadOriginal').disabled = false;
+  $('#jobState').textContent = 'Senior Product Designer - Horizon Labs';
+  $('#checkMatch').disabled = false;
+  $('#analyzeJob').disabled = false;
+  d.querySelectorAll('.intensity-cost').forEach((el, i) => {
+    el.textContent = ' - ' + [1, 2, 3, 5][i] + ' cr';
+  });
+  show('#targetingRow');
+  $('#atsMatch').disabled = false;
+  $('#recruiterMatch').disabled = false;
+
+  if (frame === 'a') {
+    $('#atsMatch').checked = true;
+    $('#recruiterMatch').checked = true;
+    hide('#resultPanel');
+  }
+
+  if (frame === 'b') {
+    show('#resultPanel');
+    show('#matchPanel');
+    $('#matchValue').textContent = '87%';
+    $('#matchDelta').textContent = 'up from 62%';
+    $('#generatedState').textContent = 'Your tailored resume is ready.';
+    $('#boostMatch').disabled = false;
+    $('#downloadPdf').disabled = false;
+    $('#downloadDocx').disabled = false;
+    $('#chatInput').disabled = false;
+    $('#chatSend').disabled = false;
+    const log = $('#chatLog');
+    const mk = (cls, text) => {
+      const el = d.createElement('div');
+      el.className = 'chat-bubble ' + cls;
+      el.textContent = text;
+      log.appendChild(el);
+    };
+    mk('user', 'Make the summary more leadership-focused');
+    mk('assistant', 'Done - the summary now leads with team leadership and product strategy.');
+    // keep it compact: hide the editor caret area
+    hide('#editorBlock');
+  }
+
+  if (frame === 'c') {
+    hide('#resultPanel');
+    show('#matchCheckPanel');
+    $('#matchCheckScore').textContent = '64%';
+    $('#matchCheckVerdict').textContent = 'Good base - a few key skills are missing.';
+    const chips = (sel, items, cls) => {
+      const box = $(sel);
+      items.forEach((k) => {
+        const chip = d.createElement('span');
+        chip.className = 'chip ' + cls;
+        chip.textContent = k;
+        box.appendChild(chip);
+      });
+      box.closest('.chip-group').classList.remove('hidden');
+    };
+    chips('#matchedChips', ['Figma', 'Design systems', 'User research', 'Prototyping'], 'ok');
+    chips('#missingChips', ['A/B testing', 'Mobile-first', 'Accessibility'], 'gap');
+  }
+
+  document.title = 'shot-ready-' + frame;
+});
+</script>
+</body>
+</html>

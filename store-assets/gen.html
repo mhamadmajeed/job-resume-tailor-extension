@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>asset gen</title></head>
+<body>
+<pre id="log">ready</pre>
+<script>
+const log = (m) => { document.querySelector('#log').textContent += '\n' + m; };
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function brandGradient(ctx, x0, y0, x1, y1) {
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  g.addColorStop(0, '#7c5cff'); g.addColorStop(1, '#22d3ee');
+  return g;
+}
+
+// 512px master logo, downscaled for each icon size.
+function drawLogoMaster() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 512;
+  const ctx = c.getContext('2d');
+  roundRect(ctx, 0, 0, 512, 512, 100);
+  ctx.fillStyle = brandGradient(ctx, 0, 0, 512, 512); ctx.fill();
+  const sheen = ctx.createLinearGradient(0, 0, 0, 512);
+  sheen.addColorStop(0, 'rgba(255,255,255,0.18)'); sheen.addColorStop(0.45, 'rgba(255,255,255,0)');
+  roundRect(ctx, 0, 0, 512, 512, 100);
+  ctx.fillStyle = sheen; ctx.fill();
+  ctx.fillStyle = '#05070d';
+  ctx.font = '800 236px "Segoe UI", system-ui, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('RP', 256, 274);
+  return c;
+}
+
+function scaled(master, size) {
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(master, 0, 0, size, size);
+  return c;
+}
+
+function starfield(ctx, w, h, n) {
+  for (let i = 0; i < n; i++) {
+    const x = Math.random() * w, y = Math.random() * h;
+    ctx.fillStyle = `rgba(155,138,253,${0.04 + Math.random() * 0.08})`;
+    ctx.beginPath(); ctx.arc(x, y, Math.random() * 2 + 0.5, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function glow(ctx, x, y, r, color) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+// Mini mock of the popup result card, drawn by hand for the promo tiles.
+function drawMockCard(ctx, x, y, w, h, scale) {
+  roundRect(ctx, x, y, w, h, 14 * scale);
+  ctx.fillStyle = '#121830'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1; ctx.stroke();
+  // match score ring
+  const cx = x + w - 34 * scale, cy = y + 34 * scale, rr = 18 * scale;
+  ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 5 * scale; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, rr, -Math.PI / 2, Math.PI * 2 * 0.87 - Math.PI / 2);
+  ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 5 * scale; ctx.stroke();
+  ctx.fillStyle = '#eef1f8'; ctx.font = `700 ${13 * scale}px "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('87%', cx, cy);
+  // title + text lines
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#eef1f8'; ctx.font = `700 ${12.5 * scale}px "Segoe UI", sans-serif`;
+  ctx.fillText('Tailored resume', x + 16 * scale, y + 30 * scale);
+  ctx.fillStyle = '#97a1b8'; ctx.font = `400 ${9.5 * scale}px "Segoe UI", sans-serif`;
+  ctx.fillText('Senior Product Designer', x + 16 * scale, y + 46 * scale);
+  const lineW = [0.8, 0.95, 0.7, 0.88, 0.6];
+  lineW.forEach((f, i) => {
+    roundRect(ctx, x + 16 * scale, y + (62 + i * 14) * scale, (w - 90 * scale) * f, 6 * scale, 3 * scale);
+    ctx.fillStyle = `rgba(255,255,255,${0.10 + (i % 2) * 0.04})`; ctx.fill();
+  });
+  // gradient button
+  roundRect(ctx, x + 16 * scale, y + h - 34 * scale, 120 * scale, 22 * scale, 11 * scale);
+  ctx.fillStyle = brandGradient(ctx, x, y + h - 34 * scale, x + 120 * scale, y + h);
+  ctx.fill();
+  ctx.fillStyle = '#05070d'; ctx.font = `700 ${10 * scale}px "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('Download PDF', x + 76 * scale, y + h - 23 * scale);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+
+function drawTile(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#0a0e1a'; ctx.fillRect(0, 0, w, h);
+  glow(ctx, w * 0.9, h * 0.15, w * 0.5, 'rgba(124,92,255,0.28)');
+  glow(ctx, w * 0.12, h * 0.95, w * 0.42, 'rgba(34,211,238,0.20)');
+  starfield(ctx, w, h, Math.round(w / 12));
+  const s = h / 280;
+  // Text column stops before the mock card so nothing collides.
+  const cardW = 158 * s, cardX = w - cardW - 20 * s;
+  const maxTextW = cardX - 40 * s;
+  const fit = (text, weight, px, floorPx) => {
+    let size = px;
+    ctx.font = `${weight} ${size}px "Segoe UI", sans-serif`;
+    while (ctx.measureText(text).width > maxTextW && size > floorPx) {
+      size -= 1;
+      ctx.font = `${weight} ${size}px "Segoe UI", sans-serif`;
+    }
+    return size;
+  };
+  // logo
+  const logo = scaled(drawLogoMaster(), Math.round(34 * s));
+  ctx.drawImage(logo, 24 * s, 22 * s);
+  ctx.fillStyle = '#eef1f8'; ctx.font = `700 ${17 * s}px "Segoe UI", sans-serif`;
+  ctx.fillText('ResumePilot', 66 * s, 45 * s);
+  // headline, auto-fit to the text column
+  const head1 = 'Tailor your resume';
+  const head2 = 'to any job in a click';
+  const headSize = Math.min(fit(head1, 800, 26 * s, 14 * s), fit(head2, 800, 26 * s, 14 * s));
+  ctx.font = `800 ${headSize}px "Segoe UI", sans-serif`;
+  ctx.fillStyle = '#eef1f8';
+  ctx.fillText(head1, 24 * s, 120 * s);
+  ctx.fillStyle = brandGradient(ctx, 24 * s, 0, 24 * s + maxTextW, 0);
+  ctx.fillText(head2, 24 * s, 120 * s + headSize * 1.22);
+  ctx.fillStyle = '#97a1b8';
+  const subSize = fit('AI rewrites it for the job you are viewing.', 400, 12.5 * s, 9 * s);
+  ctx.font = `400 ${subSize}px "Segoe UI", sans-serif`;
+  ctx.fillText('AI rewrites it for the job you are viewing.', 24 * s, 196 * s);
+  ctx.fillText('Match score, ATS keywords, instant PDF.', 24 * s, 196 * s + subSize * 1.45);
+  // mock card on the right
+  drawMockCard(ctx, cardX, 50 * s, cardW, 190 * s, s);
+  return c;
+}
+
+async function save(canvas, name, type = 'image/png', quality) {
+  const blob = await new Promise((r) => canvas.toBlob(r, type, quality));
+  const res = await fetch('/save?name=' + encodeURIComponent(name), { method: 'POST', body: blob });
+  log(await res.text() + ' (' + Math.round(blob.size / 1024) + ' KB)');
+}
+
+window.generate = async () => {
+  const master = drawLogoMaster();
+  for (const size of [16, 32, 48, 128]) {
+    await save(scaled(master, size), `icon${size}.png`);
+  }
+  await save(scaled(master, 128), 'store-icon-128.png');
+  await save(drawTile(440, 280), 'promo-small-440x280.png');
+  await save(drawTile(1400, 560), 'promo-marquee-1400x560.png');
+  log('DONE');
+  return 'DONE';
+};
+</script>
+</body>
+</html>

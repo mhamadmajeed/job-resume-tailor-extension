@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>store shot renderer</title>
+<link rel="stylesheet" href="../popup.css">
+<style>
+  body { background: #0a0e1a; }
+  /* Mirror popup.css's body rules onto the host so the injected markup lays out
+     identically; html2canvas only styles elements in this same document. */
+  #popupHost {
+    width: 400px; overflow: hidden;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 13px; color: var(--ink); background: var(--bg); line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+<div id="popupHost"></div>
+<pre id="log" style="color:#9b8afd"></pre>
+<script src="html2canvas.min.js"></script>
+<script>
+const log = (m) => { document.querySelector('#log').textContent += m + '\n'; };
+
+const FRAMES = {
+  a: {
+    head1: 'Tailor your resume to', head2: 'any job', head2rest: ' in one click',
+    sub: ['Open a job posting, pick how deep the rewrite goes,', 'and get a polished PDF in seconds.']
+  },
+  b: {
+    head1: 'Watch your match', head2: 'score jump', head2rest: '',
+    sub: ['Boost pushes it higher. Refine with AI chat', 'until every line earns its place.']
+  },
+  c: {
+    head1: 'See what is missing', head2: 'before you apply', head2rest: '',
+    sub: ['Free match check shows which keywords you have', 'and which ones the job wants.']
+  }
+};
+
+async function loadPopupMarkup() {
+  const html = await (await fetch('../popup.html')).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const shell = doc.querySelector('main.shell');
+  shell.querySelectorAll('script').forEach((s) => s.remove());
+  document.querySelector('#popupHost').replaceChildren(shell);
+}
+
+function stage(frame) {
+  const host = document.querySelector('#popupHost');
+  const d = { querySelector: (s) => host.querySelector(s), querySelectorAll: (s) => host.querySelectorAll(s), createElement: (t) => document.createElement(t) };
+  const $ = (sel) => d.querySelector(sel);
+  const show = (sel) => $(sel) && $(sel).classList.remove('hidden');
+  const hide = (sel) => $(sel) && $(sel).classList.add('hidden');
+  hide('#signinPanel');
+  hide('#upgradeBar');
+  hide('#upsellPanel');
+  hide('#syncButton');
+  hide('#progressWrap');
+  $('#accountState').textContent = 'Elite plan - alex@gmail.com';
+  $('#quotaState').textContent = '463 credits';
+  $('.file-cta').textContent = 'Upload new resume';
+  $('#saveState').textContent = 'On file: Alex-Rivera-Resume.pdf';
+  $('#downloadOriginal').disabled = false;
+  $('#jobState').textContent = 'Senior Product Designer - Horizon Labs';
+  $('#checkMatch').disabled = false;
+  $('#analyzeJob').disabled = false;
+  d.querySelectorAll('.intensity-cost').forEach((el, i) => { el.textContent = ' - ' + [1, 2, 3, 5][i] + ' cr'; });
+  show('#targetingRow');
+  $('#atsMatch').disabled = false;
+  $('#recruiterMatch').disabled = false;
+  $('#atsMatch').checked = false;
+  $('#recruiterMatch').checked = false;
+  hide('#resultPanel');
+  hide('#matchCheckPanel');
+  $('#matchedChips').innerHTML = '';
+  $('#missingChips').innerHTML = '';
+  $('#chatLog').innerHTML = '';
+
+  if (frame === 'a') {
+    $('#atsMatch').checked = true;
+    $('#recruiterMatch').checked = true;
+  }
+  if (frame === 'b') {
+    show('#resultPanel');
+    show('#matchPanel');
+    $('#matchValue').textContent = '87%';
+    $('#matchDelta').textContent = 'up from 62%';
+    $('#generatedState').textContent = 'Your tailored resume is ready.';
+    $('#boostMatch').disabled = false;
+    $('#downloadPdf').disabled = false;
+    $('#downloadDocx').disabled = false;
+    hide('#editorBlock');
+    const mk = (cls, text) => {
+      const el = d.createElement('div');
+      el.className = 'chat-bubble ' + cls;
+      el.textContent = text;
+      $('#chatLog').appendChild(el);
+    };
+    mk('user', 'Make the summary more leadership-focused');
+    mk('assistant', 'Done - it now leads with team leadership and product strategy.');
+  }
+  if (frame === 'c') {
+    show('#matchCheckPanel');
+    $('#matchCheckScore').textContent = '64%';
+    $('#matchCheckVerdict').textContent = 'Good base - a few key skills are missing.';
+    const chips = (sel, items, cls) => {
+      const box = $(sel);
+      items.forEach((k) => {
+        const chip = d.createElement('span');
+        chip.className = 'chip ' + cls;
+        chip.textContent = k;
+        box.appendChild(chip);
+      });
+      box.closest('.chip-group').classList.remove('hidden');
+    };
+    chips('#matchedChips', ['Figma', 'Design systems', 'User research', 'Prototyping'], 'ok');
+    chips('#missingChips', ['A/B testing', 'Mobile-first', 'Accessibility'], 'gap');
+  }
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function glow(ctx, x, y, r, color) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+async function renderFrame(frame) {
+  stage(frame);
+  await new Promise((r) => setTimeout(r, 150));
+  const host = document.querySelector('#popupHost');
+  const popupCanvas = await html2canvas(host, {
+    backgroundColor: '#0a0e1a', width: 400, scale: 2, logging: false
+  });
+
+  const c = document.createElement('canvas');
+  c.width = 1280; c.height = 800;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#0a0e1a'; ctx.fillRect(0, 0, 1280, 800);
+  glow(ctx, 1180, 60, 520, 'rgba(124,92,255,0.30)');
+  glow(ctx, 90, 760, 440, 'rgba(34,211,238,0.20)');
+  for (let i = 0; i < 90; i++) {
+    ctx.fillStyle = `rgba(155,138,253,${0.04 + Math.random() * 0.07})`;
+    ctx.beginPath();
+    ctx.arc(Math.random() * 1280, Math.random() * 800, Math.random() * 1.8 + 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // brand row
+  const logo = new Image();
+  logo.src = 'icon128.png';
+  await new Promise((r) => { logo.onload = r; });
+  const drawRounded = (img, x, y, size, radius) => {
+    ctx.save(); roundRectPath(ctx, x, y, size, size, radius); ctx.clip();
+    ctx.drawImage(img, x, y, size, size); ctx.restore();
+  };
+  drawRounded(logo, 80, 120, 44, 10);
+  ctx.fillStyle = '#eef1f8'; ctx.font = '700 22px "Segoe UI", sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('ResumePilot', 138, 143);
+  ctx.textBaseline = 'alphabetic';
+
+  // headline: first line white, second line gradient (+ optional white tail)
+  const f = FRAMES[frame];
+  ctx.font = '800 52px "Segoe UI", sans-serif';
+  ctx.fillStyle = '#eef1f8';
+  ctx.fillText(f.head1, 80, 290);
+  const grad = ctx.createLinearGradient(80, 0, 560, 0);
+  grad.addColorStop(0, '#7c5cff'); grad.addColorStop(1, '#22d3ee');
+  ctx.fillStyle = grad;
+  ctx.fillText(f.head2, 80, 350);
+  if (f.head2rest) {
+    const w2 = ctx.measureText(f.head2).width;
+    ctx.fillStyle = '#eef1f8';
+    ctx.fillText(f.head2rest, 80 + w2, 350);
+  }
+  ctx.fillStyle = '#97a1b8'; ctx.font = '400 20px "Segoe UI", sans-serif';
+  ctx.fillText(f.sub[0], 80, 405);
+  ctx.fillText(f.sub[1], 80, 435);
+
+  // device card with the rendered popup
+  const dx = 776, dy = 43, dw = 424, dh = 714;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 60; ctx.shadowOffsetY = 24;
+  roundRectPath(ctx, dx, dy, dw, dh, 22);
+  ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fill();
+  ctx.restore();
+  roundRectPath(ctx, dx, dy, dw, dh, 22);
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.save();
+  roundRectPath(ctx, dx + 12, dy + 12, 400, 690, 14);
+  ctx.clip();
+  ctx.fillStyle = '#0a0e1a';
+  ctx.fillRect(dx + 12, dy + 12, 400, 690);
+  ctx.drawImage(popupCanvas, dx + 12, dy + 12, 400, popupCanvas.height / 2 > 690 ? 690 : popupCanvas.height / 2);
+  ctx.restore();
+
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  const res = await fetch('/save?name=screenshot-' + frame + '-1280x800.png', { method: 'POST', body: blob });
+  log(await res.text() + ' (' + Math.round(blob.size / 1024) + ' KB)');
+}
+
+window.renderAll = async () => {
+  await loadPopupMarkup();
+  for (const frame of ['a', 'b', 'c']) await renderFrame(frame);
+  log('DONE');
+  return 'DONE';
+};
+</script>
+</body>
+</html>

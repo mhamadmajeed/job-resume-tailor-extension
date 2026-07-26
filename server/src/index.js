@@ -1053,8 +1053,11 @@ account.post('/checkout', asyncRoute(async (req, res) => {
   const user = getOrCreateUser(req.accountId);
   const plan = req.body?.plan === 'elite' ? 'elite' : 'pro';
   const cycle = req.body?.cycle === 'yearly' ? 'yearly' : 'monthly';
-  const successUrl = req.body?.successUrl || `${process.env.PUBLIC_WEB_URL}/dashboard?upgraded=1`;
-  const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_WEB_URL}/dashboard`;
+  // PUBLIC_WEB_URL is optional on Railway; without a full https fallback Stripe
+  // rejects "undefined/dashboard" with "Invalid URL: An explicit scheme...".
+  const webBase = process.env.PUBLIC_WEB_URL || process.env.PUBLIC_BASE_URL || 'https://resumepilot.co';
+  const successUrl = req.body?.successUrl || `${webBase}/dashboard?upgraded=1`;
+  const cancelUrl = req.body?.cancelUrl || `${webBase}/dashboard`;
   const discount = checkoutDiscountForPlan(req, plan);
 
   try {
@@ -1078,7 +1081,8 @@ account.post('/billing-portal', asyncRoute(async (req, res) => {
   }
 
   try {
-    const session = await createBillingPortalSession(process.env, user.stripe_customer_id, `${process.env.PUBLIC_WEB_URL}/dashboard`);
+    const webBase = process.env.PUBLIC_WEB_URL || process.env.PUBLIC_BASE_URL || 'https://resumepilot.co';
+    const session = await createBillingPortalSession(process.env, user.stripe_customer_id, `${webBase}/dashboard`);
     res.json({ url: session.url });
   } catch (portalError) {
     res.status(500).json({ error: portalError.message });
@@ -1126,6 +1130,7 @@ app.use('/blog', blogRouter);
 
 app.use(express.static(WEB_DIR));
 app.get('/dashboard', (req, res) => res.sendFile(path.join(WEB_DIR, 'dashboard.html')));
+app.get('/privacy', (req, res) => res.sendFile(path.join(WEB_DIR, 'privacy.html')));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found.' }));
 

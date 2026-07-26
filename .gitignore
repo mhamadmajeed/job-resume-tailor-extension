@@ -1,4 +1,2 @@
-node_modules/
-server/node_modules/
-server/.dev.vars
-server/.wrangler/
+store-assets/frame-*.jpg
+store-assets/html2canvas.min.js
