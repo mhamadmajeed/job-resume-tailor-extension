@@ -14,6 +14,8 @@ const quotaState = document.querySelector('#quotaState');
 const syncButton = document.querySelector('#syncButton');
 const upsellPanel = document.querySelector('#upsellPanel');
 const upgradeButton = document.querySelector('#upgradeButton');
+const upgradeBar = document.querySelector('#upgradeBar');
+const upgradeBarButton = document.querySelector('#upgradeBarButton');
 const matchPanel = document.querySelector('#matchPanel');
 const matchValue = document.querySelector('#matchValue');
 const matchDelta = document.querySelector('#matchDelta');
@@ -328,6 +330,12 @@ function applyFeatureGates() {
       badge.classList.toggle('hidden', isElitePlan);
     });
   }
+
+  // Signed-in free accounts always see a compact upgrade bar under the topbar.
+  // Paid plans never do, and neither does a missing quota (signed out or the
+  // server was unreachable). The quota-exhausted upsell panel stays independent.
+  const showUpgradeBar = Boolean(currentQuota) && Boolean(currentAccount) && !isPaidPlan;
+  if (upgradeBar) upgradeBar.classList.toggle('hidden', !showUpgradeBar);
 }
 
 // The intensity radio values predate the credit system, so map them to the keys
@@ -500,6 +508,12 @@ upgradeButton.addEventListener('click', async () => {
   } finally {
     upgradeButton.disabled = false;
   }
+});
+
+// The always-visible bar routes to the pricing page instead of direct checkout,
+// so free users see both plans, the yearly toggle, and any active offers.
+upgradeBarButton.addEventListener('click', () => {
+  chrome.tabs.create({ url: `${API_BASE_URL}/#pricing` });
 });
 
 // ---- PDF/DOCX generation (unchanged local rendering) ----
