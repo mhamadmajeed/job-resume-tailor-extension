@@ -27,6 +27,8 @@ const planBadge = document.querySelector('#planBadge');
 const upgradeRow = document.querySelector('#upgradeRow');
 const upgradeProButton = document.querySelector('#upgradeProButton');
 const upgradeEliteButton = document.querySelector('#upgradeEliteButton');
+const upgradeProCountdown = document.querySelector('#upgradeProCountdown');
+const upgradeEliteCountdown = document.querySelector('#upgradeEliteCountdown');
 const upgradeError = document.querySelector('#upgradeError');
 
 const resumeGrid = document.querySelector('#resumeGrid');
@@ -238,6 +240,7 @@ function renderAccount(account) {
   upgradeProButton.classList.toggle('hidden', plan !== 'free');
   upgradeEliteButton.classList.toggle('hidden', plan === 'elite');
   upgradeRow.classList.toggle('hidden', plan === 'elite');
+  updateUpgradeButtonPricing();
 }
 
 async function startCheckout(plan, button) {
@@ -260,6 +263,84 @@ async function startCheckout(plan, button) {
 
 upgradeProButton.addEventListener('click', () => startCheckout('pro', upgradeProButton));
 upgradeEliteButton.addEventListener('click', () => startCheckout('elite', upgradeEliteButton));
+
+// ---- Discount offer (upgrade button pricing + compact countdown) ----
+// GET /api/offer is public (no device auth) and same-origin, so the
+// rp_visitor cookie it sets/reads flows automatically. Discount enforcement
+// itself happens server-side at checkout - this only affects what the
+// buttons display.
+
+const PLAN_FULL_PRICE = { pro: 19, elite: 29 };
+const PLAN_BUTTON_LABEL = { pro: 'Upgrade to Pro', elite: 'Go Elite' };
+
+let currentOffer = null;
+let offerCountdownTimer = null;
+
+function formatOfferDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad2 = (n) => (n < 10 ? `0${n}` : String(n));
+  return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+}
+
+function updateUpgradeButtonPricing() {
+  [
+    { plan: 'pro', button: upgradeProButton, countdownEl: upgradeProCountdown },
+    { plan: 'elite', button: upgradeEliteButton, countdownEl: upgradeEliteCountdown }
+  ].forEach(({ plan, button, countdownEl }) => {
+    const fullPrice = PLAN_FULL_PRICE[plan];
+    const baseLabel = PLAN_BUTTON_LABEL[plan];
+    const planPrice = currentOffer && currentOffer.prices ? currentOffer.prices[plan] : null;
+
+    button.textContent = planPrice
+      ? `${baseLabel} - $${planPrice.discounted}/mo (was $${planPrice.full})`
+      : `${baseLabel} - $${fullPrice}/mo`;
+
+    const showCountdown = Boolean(planPrice) && currentOffer.type === 'urgency' && currentOffer.expiresAt;
+    countdownEl.classList.toggle('hidden', !showCountdown);
+    if (!showCountdown) countdownEl.textContent = '';
+  });
+}
+
+function tickOfferCountdown() {
+  if (!currentOffer || currentOffer.type !== 'urgency' || !currentOffer.expiresAt) return;
+  const remaining = new Date(currentOffer.expiresAt).getTime() - Date.now();
+  if (remaining <= 0) {
+    currentOffer = null;
+    if (offerCountdownTimer) {
+      clearInterval(offerCountdownTimer);
+      offerCountdownTimer = null;
+    }
+    updateUpgradeButtonPricing();
+    return;
+  }
+  const text = `${formatOfferDuration(remaining)} left`;
+  [upgradeProCountdown, upgradeEliteCountdown].forEach((el) => {
+    if (!el.classList.contains('hidden')) el.textContent = text;
+  });
+}
+
+async function loadOffer() {
+  try {
+    const response = await fetch('/api/offer');
+    const data = response.ok ? await response.json() : { active: false };
+    currentOffer = data && data.active !== false && data.prices ? data : null;
+  } catch (_err) {
+    currentOffer = null;
+  }
+
+  updateUpgradeButtonPricing();
+  if (offerCountdownTimer) {
+    clearInterval(offerCountdownTimer);
+    offerCountdownTimer = null;
+  }
+  if (currentOffer && currentOffer.type === 'urgency' && currentOffer.expiresAt) {
+    tickOfferCountdown();
+    offerCountdownTimer = setInterval(tickOfferCountdown, 1000);
+  }
+}
 
 // ---- Notifications ----
 
@@ -701,4 +782,5 @@ if (getToken()) {
   showSignedOut();
 }
 
+loadOffer();
 maybeShowUpgradeToast();

@@ -41,6 +41,50 @@
           grid-template-columns: 1fr;
         }
       }
+
+      /* ---- Discount offer bar + discounted pricing ---- */
+
+      .hidden {
+        display: none !important;
+      }
+
+      .offer-bar {
+        background: var(--gradient);
+      }
+
+      .offer-bar-inner {
+        padding: 9px 24px;
+        text-align: center;
+      }
+
+      .offer-bar-text {
+        color: var(--on-gradient);
+        font-size: 13.5px;
+        font-weight: 750;
+        letter-spacing: 0.01em;
+      }
+
+      .price-full {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--muted);
+        text-decoration: line-through;
+        margin-right: 6px;
+      }
+
+      .offer-chip {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 8px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 750;
+        white-space: nowrap;
+        vertical-align: middle;
+      }
     </style>
   </head>
   <body>
@@ -55,6 +99,11 @@
           <a href="/dashboard">Dashboard</a>
           <a id="signInLink" class="btn primary" href="/auth/google/start">Sign in</a>
         </nav>
+      </div>
+      <div id="offerBar" class="offer-bar hidden">
+        <div class="container offer-bar-inner">
+          <span id="offerBarText" class="offer-bar-text"></span>
+        </div>
       </div>
     </header>
 
@@ -183,7 +232,7 @@
           <div class="section-head">
             <span class="eyebrow">Pricing</span>
             <h2>Start free. Upgrade when you need more.</h2>
-            <p>Every plan includes live match check with keyword gaps and dashboard sync. Pro and Elite unlock deeper tailoring intensities, Boost, and a bigger monthly quota.</p>
+            <p>Every plan includes every feature - all four tailoring intensities, Boost, live match check with keyword gaps, and dashboard sync. Paid plans simply raise your monthly quota.</p>
           </div>
           <div class="pricing-grid">
             <div class="price-card card">
@@ -197,8 +246,8 @@
               </div>
               <ul class="price-list">
                 <li>5 tailored resumes / 30 days</li>
-                <li>Light and Medium tailoring intensities</li>
-                <li>Live match check with keyword gaps</li>
+                <li>All four intensities, including Max &amp; Ultra</li>
+                <li>Boost + live match check with keyword gaps</li>
                 <li>Dashboard sync</li>
               </ul>
               <a class="btn ghost block" href="https://github.com/mhamadmajeed/job-resume-tailor-extension" target="_blank" rel="noopener">Add to Chrome - it's free</a>
@@ -208,16 +257,17 @@
               <div class="price-card-head">
                 <h3>Pro</h3>
                 <p class="muted">For a serious search across many applications a month.</p>
-                <div class="price-tag">
+                <div class="price-tag" data-plan="pro">
+                  <span class="price-full hidden">$19</span>
                   <span class="price-amount">$19</span>
                   <span class="price-period">/ month</span>
+                  <span class="offer-chip hidden"></span>
                 </div>
               </div>
               <ul class="price-list">
                 <li>100 tailored resumes / 30 days</li>
-                <li>+ Max tailoring intensity</li>
-                <li>Boost included</li>
-                <li>Everything in Free</li>
+                <li>Every feature in Free, 20x the volume</li>
+                <li>For a serious multi-application search</li>
               </ul>
               <p class="price-note">Upgrade in app - sign in and manage billing from your dashboard. No checkout here.</p>
             </div>
@@ -225,16 +275,17 @@
               <div class="price-card-head">
                 <h3>Elite</h3>
                 <p class="muted">For the heaviest month of applications.</p>
-                <div class="price-tag">
+                <div class="price-tag" data-plan="elite">
+                  <span class="price-full hidden">$29</span>
                   <span class="price-amount">$29</span>
                   <span class="price-period">/ month</span>
+                  <span class="offer-chip hidden"></span>
                 </div>
               </div>
               <ul class="price-list">
                 <li>300 tailored resumes / 30 days</li>
-                <li>+ Ultra full-rewrite intensity</li>
+                <li>Every feature, maximum volume</li>
                 <li>Priority support</li>
-                <li>Everything in Pro</li>
               </ul>
               <p class="price-note">Upgrade in app - sign in and manage billing from your dashboard. No checkout here.</p>
             </div>
@@ -301,6 +352,115 @@
         if (yearEl) {
           yearEl.textContent = String(new Date().getFullYear());
         }
+      })();
+
+      // ---- Discount offer (announcement bar + discounted pricing) ----
+      // GET /api/offer is public (no device auth) and same-origin, so the
+      // rp_visitor cookie it sets/reads flows automatically. Fails silently
+      // on any error - the page already renders full pricing by default.
+      (function () {
+        var offerBar = document.getElementById('offerBar');
+        var offerBarText = document.getElementById('offerBarText');
+        var priceTags = {
+          pro: document.querySelector('.price-tag[data-plan="pro"]'),
+          elite: document.querySelector('.price-tag[data-plan="elite"]')
+        };
+        var countdownTimer = null;
+
+        function pad2(n) {
+          return n < 10 ? '0' + n : String(n);
+        }
+
+        function formatDuration(ms) {
+          var totalSeconds = Math.max(0, Math.floor(ms / 1000));
+          var hours = Math.floor(totalSeconds / 3600);
+          var minutes = Math.floor((totalSeconds % 3600) / 60);
+          var seconds = totalSeconds % 60;
+          return pad2(hours) + ':' + pad2(minutes) + ':' + pad2(seconds);
+        }
+
+        function revertPrices() {
+          Object.keys(priceTags).forEach(function (plan) {
+            var tag = priceTags[plan];
+            if (!tag) return;
+            var full = tag.querySelector('.price-full');
+            var amount = tag.querySelector('.price-amount');
+            var chip = tag.querySelector('.offer-chip');
+            if (amount && full) amount.textContent = full.textContent;
+            if (full) full.classList.add('hidden');
+            if (chip) {
+              chip.classList.add('hidden');
+              chip.textContent = '';
+            }
+          });
+          offerBar.classList.add('hidden');
+          offerBarText.textContent = '';
+          if (countdownTimer) {
+            clearInterval(countdownTimer);
+            countdownTimer = null;
+          }
+        }
+
+        function applyOffer(offer) {
+          var isUrgency = offer.type === 'urgency';
+          var label = isUrgency ? 'Limited-time offer' : 'Sale';
+          var expiresAtMs = isUrgency && offer.expiresAt ? new Date(offer.expiresAt).getTime() : null;
+          var anyPlanApplied = false;
+
+          Object.keys(priceTags).forEach(function (plan) {
+            var tag = priceTags[plan];
+            var planPrice = offer.prices && offer.prices[plan];
+            if (!tag || !planPrice) return;
+            anyPlanApplied = true;
+            var full = tag.querySelector('.price-full');
+            var amount = tag.querySelector('.price-amount');
+            if (full) {
+              full.textContent = '$' + planPrice.full;
+              full.classList.remove('hidden');
+            }
+            if (amount) amount.textContent = '$' + planPrice.discounted;
+          });
+
+          if (!anyPlanApplied) return;
+
+          function tick() {
+            if (isUrgency && expiresAtMs != null) {
+              var remaining = expiresAtMs - Date.now();
+              if (remaining <= 0) {
+                revertPrices();
+                return;
+              }
+              var duration = formatDuration(remaining);
+              offerBarText.textContent = label + ': ' + offer.percentOff + '% off Pro & Elite - ends in ' + duration;
+              Object.keys(priceTags).forEach(function (plan) {
+                var tag = priceTags[plan];
+                var planPrice = offer.prices && offer.prices[plan];
+                if (!tag || !planPrice) return;
+                var chip = tag.querySelector('.offer-chip');
+                if (chip) {
+                  chip.textContent = duration + ' left';
+                  chip.classList.remove('hidden');
+                }
+              });
+            } else {
+              offerBarText.textContent = label + ': ' + offer.percentOff + '% off Pro & Elite';
+            }
+          }
+
+          offerBar.classList.remove('hidden');
+          tick();
+          if (countdownTimer) clearInterval(countdownTimer);
+          if (isUrgency) countdownTimer = setInterval(tick, 1000);
+        }
+
+        fetch('/api/offer')
+          .then(function (res) { return res.ok ? res.json() : { active: false }; })
+          .then(function (data) {
+            if (data && data.active !== false) applyOffer(data);
+          })
+          .catch(function () {
+            // Non-critical enhancement - keep the default full pricing already in the markup.
+          });
       })();
     </script>
   </body>

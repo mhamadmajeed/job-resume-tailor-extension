@@ -126,3 +126,32 @@ CREATE TABLE IF NOT EXISTS blog_posts (
 CREATE INDEX IF NOT EXISTS idx_admins_account ON admins(account_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_account ON notifications(account_id);
 CREATE INDEX IF NOT EXISTS idx_blog_posts_status ON blog_posts(status);
+
+-- Pricing discounts, managed by the owner in the admin panel. 'standard' is an
+-- always-on sale while active; 'urgency' is a first-visit evergreen offer that opens
+-- a personal countdown window per visitor - see visitor_offers and the urgency
+-- lifecycle in index.js.
+CREATE TABLE IF NOT EXISTS discounts (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  type TEXT NOT NULL,
+  percent_off INTEGER NOT NULL,
+  applies_to TEXT NOT NULL DEFAULT 'both',
+  active INTEGER NOT NULL DEFAULT 0,
+  stripe_coupon_id TEXT NULL,
+  created_at TEXT
+);
+
+-- One row per (visitor, discount): the visitor's personal urgency offer window and
+-- the cooldown that follows it once the window expires.
+CREATE TABLE IF NOT EXISTS visitor_offers (
+  visitor_id TEXT NOT NULL,
+  discount_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  cooldown_until TEXT NOT NULL,
+  created_at TEXT,
+  PRIMARY KEY (visitor_id, discount_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discounts_type_active ON discounts(type, active);
+CREATE INDEX IF NOT EXISTS idx_visitor_offers_visitor ON visitor_offers(visitor_id);

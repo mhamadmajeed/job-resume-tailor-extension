@@ -494,6 +494,7 @@
           <button class="tab-btn" data-tab="members" type="button" role="tab">Members</button>
           <button class="tab-btn" data-tab="broadcast" type="button" role="tab">Broadcast</button>
           <button class="tab-btn" data-tab="blog" type="button" role="tab">Blog</button>
+          <button class="tab-btn" data-tab="discounts" type="button" role="tab">Discounts</button>
           <button class="tab-btn" data-tab="admins" type="button" role="tab">Admins</button>
         </div>
 
@@ -593,6 +594,50 @@
             </table>
           </div>
           <p id="postsEmpty" class="empty-note hidden">No posts yet.</p>
+        </section>
+
+        <!-- ---- Discounts tab ---- -->
+        <section id="tab-discounts" class="tab-panel" data-panel="discounts">
+          <div class="card form-card">
+            <h2>Create a discount</h2>
+            <div class="inline-fields">
+              <input id="newDiscountName" class="input" type="text" placeholder="Name (e.g. Summer sale)">
+              <select id="newDiscountType" class="input plan-select">
+                <option value="standard">Standard - always-on sale while active</option>
+                <option value="urgency">Urgency - first-visit personal countdown</option>
+              </select>
+              <input id="newDiscountPercent" class="input" type="number" min="1" max="90" placeholder="% off">
+              <select id="newDiscountAppliesTo" class="input plan-select">
+                <option value="both">Pro &amp; Elite</option>
+                <option value="pro">Pro only</option>
+                <option value="elite">Elite only</option>
+              </select>
+              <button id="addDiscountButton" class="btn primary" type="button">Create discount</button>
+            </div>
+            <p class="hint">
+              Urgency: the first time a visitor loads pricing (or their 15-day cooldown has lapsed), the server
+              opens a personal countdown of somewhere between 45 minutes and 18 hours. The discount only applies
+              at checkout while that visitor's window is still open - once it expires they pay full price for 15
+              days, then a fresh window opens on their next visit. Standard: an always-on sale for everyone with
+              no timer. Only one discount per type can be active at a time.
+            </p>
+          </div>
+          <div class="table-wrap card">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>% off</th>
+                  <th>Applies to</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="discountsBody"></tbody>
+            </table>
+          </div>
+          <p id="discountsEmpty" class="empty-note hidden">No discounts yet.</p>
         </section>
 
         <!-- ---- Admins tab ---- -->

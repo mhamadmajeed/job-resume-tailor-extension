@@ -24,7 +24,11 @@ async function stripeRequest(env, path, body) {
   return data;
 }
 
-export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan = 'pro') {
+// discount, when passed, is the discounts row to apply (see schema.sql). The Stripe
+// coupon behind it is created lazily on first use and reused afterward; when this call
+// creates a brand-new coupon its id is returned as .couponId so the caller can persist
+// it onto discounts.stripe_coupon_id (this module never writes to the DB itself).
+export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan = 'pro', discountPercent = null, discount = null) {
   if (!env.STRIPE_SECRET_KEY) {
     throw new Error('Billing is not configured yet (missing STRIPE_SECRET_KEY).');
   }
@@ -36,7 +40,7 @@ export async function createCheckoutSession(env, user, successUrl, cancelUrl, pl
     throw new Error(`Billing is not configured yet (missing ${missingVar}).`);
   }
 
-  return stripeRequest(env, '/checkout/sessions', {
+  const params = {
     mode: 'subscription',
     'line_items[0][price]': priceId,
     'line_items[0][quantity]': 1,
@@ -49,7 +53,26 @@ export async function createCheckoutSession(env, user, successUrl, cancelUrl, pl
     'metadata[plan]': normalizedPlan,
     'subscription_data[metadata][device_id]': user.id,
     'subscription_data[metadata][plan]': normalizedPlan
-  });
+  };
+
+  let couponId = null;
+  if (discountPercent && discount) {
+    couponId = discount.stripe_coupon_id || null;
+    if (!couponId) {
+      const coupon = await stripeRequest(env, '/coupons', {
+        percent_off: discountPercent,
+        duration: 'forever',
+        name: discount.name
+      });
+      couponId = coupon.id;
+    }
+    params['discounts[0][coupon]'] = couponId;
+  }
+
+  const session = await stripeRequest(env, '/checkout/sessions', params);
+  // Only surface couponId when this call minted a brand-new coupon (i.e. the discount
+  // row didn't already have one) - that's the signal the caller needs to persist it.
+  return { ...session, couponId: discount && !discount.stripe_coupon_id ? couponId : null };
 }
 
 function toBytes(value) {

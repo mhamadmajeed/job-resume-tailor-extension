@@ -90,18 +90,13 @@ function planLimit(plan) {
 
 // intensity gates: 'max' requires pro+, 'ultra' requires elite. Returns a clear
 // upgrade message, or null if the plan is allowed to use this intensity.
-function intensityGateError(plan, intensity) {
-  if (intensity === 'max' && plan === 'free') {
-    return 'The Max level needs the Pro plan ($19/mo).';
-  }
-  if (intensity === 'ultra' && plan !== 'elite') {
-    return 'The Ultra level needs the Elite plan ($29/mo).';
-  }
+// Every feature is available on every plan - the only difference between tiers is
+// the monthly quota. No money talk until the free allowance is actually used up.
+function intensityGateError(_plan, _intensity) {
   return null;
 }
 
-function boostGateError(plan) {
-  if (plan === 'free') return 'Boost needs the Pro plan ($19/mo).';
+function boostGateError(_plan) {
   return null;
 }
 
@@ -126,9 +121,9 @@ function userSummary(user) {
     limit,
     remaining: Math.max(0, limit - user.generations_used),
     features: {
-      maxIntensity: user.plan !== 'free',
-      ultraIntensity: user.plan === 'elite',
-      boost: user.plan !== 'free'
+      maxIntensity: true,
+      ultraIntensity: true,
+      boost: true
     }
   };
 }
@@ -152,7 +147,7 @@ function quotaExceededError(user) {
   if (user.plan === 'pro') {
     return `You have used all ${limit} generations for this billing period. Upgrade to Elite for 300 a month.`;
   }
-  return `Free plan limit reached (${limit} tailored resumes every 30 days). Upgrade to Pro for 100 a month.`;
+  return `Your ${limit} free tailored resumes for this month are used. Subscribe to keep going - Pro ($19/mo, 100/month) or Elite ($29/mo, 300/month).`;
 }
 
 // Check-match and generate must agree on the "before" score, so check results are
@@ -174,6 +169,130 @@ function saveMatchCheck(userId, jobText, score) {
 function getCachedMatchScore(userId, jobText) {
   const row = db.prepare('SELECT score FROM match_checks WHERE user_id = ? AND job_hash = ?').get(userId, jobHash(jobText));
   return row ? row.score : null;
+}
+
+// ---- Discounts / offers (see DISCOUNT SPEC) ----
+
+const PLAN_PRICES = { pro: 19, elite: 29 };
+const URGENCY_MIN_MS = 45 * 60 * 1000;
+const URGENCY_MAX_MS = 18 * 60 * 60 * 1000;
+const URGENCY_COOLDOWN_MS = 15 * 24 * 60 * 60 * 1000;
+const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+
+function parseCookies(header) {
+  const cookies = {};
+  String(header || '').split(';').forEach((pair) => {
+    const separatorIndex = pair.indexOf('=');
+    if (separatorIndex === -1) return;
+    const key = pair.slice(0, separatorIndex).trim();
+    const value = pair.slice(separatorIndex + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(value);
+  });
+  return cookies;
+}
+
+// Only the public offer endpoint issues the cookie - it needs a stable identity to
+// hand a visitor their personal urgency window. Checkout routes only ever read it.
+function getOrSetVisitorId(req, res) {
+  const existing = parseCookies(req.headers.cookie).rp_visitor;
+  if (existing) return existing;
+
+  const visitorId = uuid();
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const attributes = [
+    `rp_visitor=${visitorId}`,
+    'HttpOnly',
+    `Max-Age=${VISITOR_COOKIE_MAX_AGE}`,
+    'SameSite=Lax',
+    'Path=/'
+  ];
+  if (isHttps) attributes.push('Secure');
+  res.setHeader('Set-Cookie', attributes.join('; '));
+  return visitorId;
+}
+
+function randomUrgencyDurationMs() {
+  return URGENCY_MIN_MS + Math.random() * (URGENCY_MAX_MS - URGENCY_MIN_MS);
+}
+
+function getActiveDiscount(type) {
+  return db.prepare('SELECT * FROM discounts WHERE type = ? AND active = 1 LIMIT 1').get(type);
+}
+
+// Resolves (lazily creating if needed) one visitor's personal urgency window for the
+// given urgency discount. An open window is never reset by a refresh; once it expires
+// the visitor is in cooldown (no offer); once the cooldown lapses, the next call opens
+// a brand-new random window.
+function resolveUrgencyWindow(visitorId, discount) {
+  if (!visitorId || !discount) return null;
+  const now = Date.now();
+  const existing = db.prepare(
+    'SELECT * FROM visitor_offers WHERE visitor_id = ? AND discount_id = ?'
+  ).get(visitorId, discount.id);
+
+  if (existing) {
+    if (now < new Date(existing.expires_at).getTime()) {
+      return { expiresAt: existing.expires_at };
+    }
+    if (now < new Date(existing.cooldown_until).getTime()) {
+      return null; // window expired, still cooling down
+    }
+    // cooldown lapsed - fall through to open a fresh window
+  }
+
+  const expiresAt = new Date(now + randomUrgencyDurationMs()).toISOString();
+  const cooldownUntil = new Date(new Date(expiresAt).getTime() + URGENCY_COOLDOWN_MS).toISOString();
+  db.prepare(
+    `INSERT INTO visitor_offers (visitor_id, discount_id, expires_at, cooldown_until, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(visitor_id, discount_id) DO UPDATE SET
+       expires_at = excluded.expires_at, cooldown_until = excluded.cooldown_until, created_at = excluded.created_at`
+  ).run(visitorId, discount.id, expiresAt, cooldownUntil, nowIso());
+
+  return { expiresAt };
+}
+
+// Single source of truth for "what offer applies right now", shared by GET /api/offer
+// and both checkout routes. Urgency takes precedence over standard when both are
+// active and applicable to this visitor.
+function resolveActiveOffer(visitorId) {
+  const urgencyDiscount = getActiveDiscount('urgency');
+  if (urgencyDiscount) {
+    const window = resolveUrgencyWindow(visitorId, urgencyDiscount);
+    if (window) return { type: 'urgency', discount: urgencyDiscount, expiresAt: window.expiresAt };
+  }
+
+  const standardDiscount = getActiveDiscount('standard');
+  if (standardDiscount) return { type: 'standard', discount: standardDiscount, expiresAt: null };
+
+  return null;
+}
+
+function discountedPrice(full, percentOff) {
+  return Math.round(full * (100 - percentOff) / 100 * 100) / 100;
+}
+
+function offerPrices(discount) {
+  const prices = {};
+  for (const plan of ['pro', 'elite']) {
+    if (discount.applies_to === 'both' || discount.applies_to === plan) {
+      prices[plan] = { full: PLAN_PRICES[plan], discounted: discountedPrice(PLAN_PRICES[plan], discount.percent_off) };
+    }
+  }
+  return prices;
+}
+
+// Checkout-time enforcement: read the visitor cookie (never create one here - checkout
+// isn't the public pricing surface) and resolve the same offer /api/offer would, then
+// narrow it to whether it actually covers this plan.
+function checkoutDiscountForPlan(req, plan) {
+  const visitorId = parseCookies(req.headers.cookie).rp_visitor || null;
+  const offer = resolveActiveOffer(visitorId);
+  if (!offer) return { percent: null, discount: null };
+  if (offer.discount.applies_to !== 'both' && offer.discount.applies_to !== plan) {
+    return { percent: null, discount: null };
+  }
+  return { percent: offer.discount.percent_off, discount: offer.discount };
 }
 
 // A device is anonymous (owner id = its own device id) until it's linked to an
@@ -292,6 +411,24 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
   redirectUrl.hash = `token=${sessionToken}`;
   res.redirect(redirectUrl.toString());
 }));
+
+// ---- Public offer API (no device auth - it's for the public website) ----
+// Registered before the authed router mount below so it never needs X-Device-Id.
+
+app.get('/api/offer', (req, res) => {
+  const visitorId = getOrSetVisitorId(req, res);
+  const offer = resolveActiveOffer(visitorId);
+  if (!offer) return res.json({ active: false });
+
+  const response = {
+    type: offer.type,
+    percentOff: offer.discount.percent_off,
+    appliesTo: offer.discount.applies_to,
+    prices: offerPrices(offer.discount)
+  };
+  if (offer.type === 'urgency') response.expiresAt = offer.expiresAt;
+  res.json(response);
+});
 
 // ---- Authenticated (device-id) API - used by the extension, no sign-in required ----
 
@@ -503,9 +640,13 @@ authed.post('/checkout', asyncRoute(async (req, res) => {
 
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_BASE_URL}/billing/success`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_BASE_URL}/billing/cancel`;
+  const { percent: discountPercent, discount } = checkoutDiscountForPlan(req, plan);
 
   try {
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, discountPercent, discount);
+    if (session.couponId && discount) {
+      db.prepare('UPDATE discounts SET stripe_coupon_id = ? WHERE id = ?').run(session.couponId, discount.id);
+    }
     res.json({ url: session.url });
   } catch (checkoutError) {
     res.status(500).json({ error: checkoutError.message });
@@ -582,9 +723,13 @@ account.post('/checkout', asyncRoute(async (req, res) => {
   const plan = req.body?.plan === 'elite' ? 'elite' : 'pro';
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_WEB_URL}/dashboard?upgraded=1`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_WEB_URL}/dashboard`;
+  const { percent: discountPercent, discount } = checkoutDiscountForPlan(req, plan);
 
   try {
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, discountPercent, discount);
+    if (session.couponId && discount) {
+      db.prepare('UPDATE discounts SET stripe_coupon_id = ? WHERE id = ?').run(session.couponId, discount.id);
+    }
     res.json({ url: session.url });
   } catch (checkoutError) {
     res.status(500).json({ error: checkoutError.message });

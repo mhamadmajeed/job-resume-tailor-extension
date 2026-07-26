@@ -5,7 +5,7 @@
 const SESSION_KEY = 'rt_session';
 
 const ROLE_TABS = {
-  owner: ['members', 'broadcast', 'blog', 'admins'],
+  owner: ['members', 'broadcast', 'blog', 'discounts', 'admins'],
   moderator: ['members', 'broadcast', 'blog'],
   writer: ['blog']
 };
@@ -30,6 +30,7 @@ const toastEl = document.querySelector('#toast');
 let currentAdmin = null; // { role, email, name }
 let members = [];
 let posts = [];
+let discounts = [];
 let admins = [];
 let editingPostId = null;
 let slugTouched = false;
@@ -232,6 +233,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
     setActiveTab(btn.dataset.tab);
     if (btn.dataset.tab === 'members' && !members.length) loadMembers();
     if (btn.dataset.tab === 'blog' && !posts.length) loadPosts();
+    if (btn.dataset.tab === 'discounts' && !discounts.length) loadDiscounts();
     if (btn.dataset.tab === 'admins' && !admins.length) loadAdmins();
   });
 });
@@ -666,6 +668,142 @@ async function deletePost(id) {
   }
 }
 
+// ---- Discounts tab ----
+
+async function loadDiscounts() {
+  try {
+    const rows = await apiFetch('/admin/discounts');
+    discounts = rows || [];
+    renderDiscounts();
+  } catch (err) {
+    showToast(err.message || 'Could not load discounts.');
+  }
+}
+
+function discountTypeLabel(type) {
+  return type === 'urgency' ? 'Urgency' : 'Standard';
+}
+
+function appliesToLabel(value) {
+  if (value === 'pro') return 'Pro only';
+  if (value === 'elite') return 'Elite only';
+  return 'Pro & Elite';
+}
+
+function renderDiscounts() {
+  const tbody = document.querySelector('#discountsBody');
+  tbody.innerHTML = '';
+  document.querySelector('#discountsEmpty').classList.toggle('hidden', discounts.length > 0);
+  discounts.forEach((discount) => tbody.appendChild(renderDiscountRow(discount)));
+}
+
+function renderDiscountRow(discount) {
+  const id = pick(discount, 'id');
+  const active = Boolean(pick(discount, 'active'));
+  const percentOff = pick(discount, 'percent_off', 'percentOff');
+  const appliesTo = pick(discount, 'applies_to', 'appliesTo');
+
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>${escapeHtml(pick(discount, 'name') || 'Untitled')}</td>
+    <td>${escapeHtml(discountTypeLabel(pick(discount, 'type')))}</td>
+    <td class="cell-muted">${escapeHtml(percentOff != null ? `${percentOff}%` : '-')}</td>
+    <td class="cell-muted">${escapeHtml(appliesToLabel(appliesTo))}</td>
+    <td class="status-cell"></td>
+    <td class="cell-actions"></td>
+  `;
+
+  const statusCell = tr.querySelector('.status-cell');
+  const pill = document.createElement('span');
+  pill.className = `status-pill ${active ? 'active' : 'paused'}`;
+  pill.textContent = active ? 'Active' : 'Inactive';
+  statusCell.appendChild(pill);
+
+  const actions = tr.querySelector('.cell-actions');
+
+  const toggleBtn = document.createElement('button');
+  toggleBtn.type = 'button';
+  toggleBtn.className = 'btn ghost small';
+  toggleBtn.textContent = active ? 'Deactivate' : 'Activate';
+  toggleBtn.addEventListener('click', () => toggleDiscount(discount, toggleBtn));
+  actions.appendChild(toggleBtn);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'btn ghost small';
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.addEventListener('click', () => deleteDiscount(id));
+  actions.appendChild(deleteBtn);
+
+  return tr;
+}
+
+async function toggleDiscount(discount, button) {
+  const id = pick(discount, 'id');
+  const active = Boolean(pick(discount, 'active'));
+  const path = active
+    ? `/admin/discounts/${encodeURIComponent(id)}/deactivate`
+    : `/admin/discounts/${encodeURIComponent(id)}/activate`;
+  button.disabled = true;
+  try {
+    await apiFetch(path, { method: 'POST', body: JSON.stringify({}) });
+    showToast(active ? 'Discount deactivated.' : 'Discount activated.');
+    // Activating a discount also deactivates every other discount of the
+    // same type on the server, so reload the full list rather than patch
+    // this row locally.
+    loadDiscounts();
+  } catch (err) {
+    showToast(err.message || 'Could not update discount.');
+    button.disabled = false;
+  }
+}
+
+async function deleteDiscount(id) {
+  if (!window.confirm('Delete this discount? This also clears any visitor offer windows tied to it.')) return;
+  try {
+    await apiFetch(`/admin/discounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    discounts = discounts.filter((d) => pick(d, 'id') !== id);
+    renderDiscounts();
+    showToast('Discount deleted.');
+  } catch (err) {
+    showToast(err.message || 'Could not delete discount.');
+  }
+}
+
+document.querySelector('#addDiscountButton').addEventListener('click', async () => {
+  const name = document.querySelector('#newDiscountName').value.trim();
+  const type = document.querySelector('#newDiscountType').value;
+  const percentRaw = document.querySelector('#newDiscountPercent').value.trim();
+  const appliesTo = document.querySelector('#newDiscountAppliesTo').value;
+  const percentOff = Number(percentRaw);
+
+  if (!name) {
+    showToast('Add a name first.');
+    return;
+  }
+  if (!percentRaw || Number.isNaN(percentOff) || percentOff < 1 || percentOff > 90) {
+    showToast('Enter a percent off between 1 and 90.');
+    return;
+  }
+
+  const btn = document.querySelector('#addDiscountButton');
+  btn.disabled = true;
+  try {
+    await apiFetch('/admin/discounts', {
+      method: 'POST',
+      body: JSON.stringify({ name, type, percent_off: percentOff, applies_to: appliesTo })
+    });
+    document.querySelector('#newDiscountName').value = '';
+    document.querySelector('#newDiscountPercent').value = '';
+    showToast('Discount created.');
+    loadDiscounts();
+  } catch (err) {
+    showToast(err.message || 'Could not create discount.');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ---- Admins tab ----
 
 async function loadAdmins() {
@@ -790,6 +928,7 @@ async function boot() {
     const allowed = ROLE_TABS[me.role] || [];
     if (allowed.includes('members')) loadMembers();
     if (allowed.includes('blog')) loadPosts();
+    if (allowed.includes('discounts')) loadDiscounts();
     if (allowed.includes('admins')) loadAdmins();
   } catch (err) {
     if (err.message && err.message.toLowerCase().includes('sign in')) {

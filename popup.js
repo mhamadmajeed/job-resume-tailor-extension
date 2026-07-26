@@ -213,49 +213,35 @@ function renderQuota() {
 
   const upsellText = document.querySelector('#upsellText');
   if (upsellText && currentQuota.limit != null) {
-    upsellText.textContent = `Free plan: ${currentQuota.remaining} of ${currentQuota.limit} tailored resumes left this month.`;
+    upsellText.textContent = `Your ${currentQuota.limit} free tailored resumes for this month are used. Subscribe to keep going.`;
   }
-
-  // Only pitch the upgrade after they've seen a result, never upfront.
-  if (isPro) upsellPanel.classList.add('hidden');
 
   applyPlanGating();
+  maybeShowUpsell();
 }
 
-// Server already enforces every gate below on /api/generate and /api/boost -
-// this is UX only, so the picker doesn't let people pick something they'll
-// just get a 403 for. A missing `features` object (old cached /api/me or
-// /api/state response) is treated as fully unlocked so nothing breaks.
+// Every feature (Max, Ultra, Boost) is available on every plan - the only limit is
+// the monthly quota. Keep everything unlocked; the server agrees.
 function applyPlanGating() {
-  const features = currentQuota?.features || { maxIntensity: true, ultraIntensity: true, boost: true };
+  [maxIntensityOption, ultraIntensityOption].forEach((optionEl) => {
+    if (!optionEl) return;
+    const input = optionEl.querySelector('input');
+    const badge = optionEl.querySelector('.lock-badge');
+    optionEl.classList.remove('locked');
+    if (input) input.disabled = false;
+    if (badge) badge.classList.add('hidden');
+    optionEl.title = '';
+  });
 
-  setIntensityLock(maxIntensityOption, features.maxIntensity === false, 'The Max level needs the Pro plan ($19/mo).');
-  setIntensityLock(ultraIntensityOption, features.ultraIntensity === false, 'The Ultra level needs the Elite plan ($29/mo).');
-
-  // If the currently selected intensity just became locked, fall back to Medium.
-  const checkedInput = document.querySelector('input[name="intensity"]:checked');
-  if (checkedInput?.closest('.intensity-option')?.classList.contains('locked')) {
-    const balancedInput = document.querySelector('input[name="intensity"][value="balanced"]');
-    if (balancedInput) balancedInput.checked = true;
-  }
-
-  boostLockedByPlan = features.boost === false;
-  boostMatch.title = boostLockedByPlan ? 'Boost needs the Pro plan ($19/mo).' : '';
-  boostMatch.disabled = isBusyState || !currentGeneratedResume || boostLockedByPlan;
+  boostLockedByPlan = false;
+  boostMatch.title = '';
+  boostMatch.disabled = isBusyState || !currentGeneratedResume;
 }
 
-function setIntensityLock(optionEl, locked, tooltip) {
-  if (!optionEl) return;
-  const input = optionEl.querySelector('input');
-  const badge = optionEl.querySelector('.lock-badge');
-  optionEl.classList.toggle('locked', locked);
-  if (input) input.disabled = locked;
-  if (badge) badge.classList.toggle('hidden', !locked);
-  optionEl.title = locked ? tooltip : '';
-}
-
+// Never mention money until the free quota is actually used up.
 function maybeShowUpsell() {
-  upsellPanel.classList.toggle('hidden', Boolean(currentQuota?.isPro));
+  const exhausted = currentQuota && !currentQuota.isPro && currentQuota.remaining <= 0;
+  upsellPanel.classList.toggle('hidden', !exhausted);
 }
 
 async function refreshAccount() {
@@ -1147,6 +1133,9 @@ analyzeJob.addEventListener('click', async () => {
   } catch (error) {
     progressHide(0);
     showError(jobState, error.message || 'Unable to tailor this page');
+    // A quota error means the free allowance just ran out - refresh so the
+    // subscribe panel appears at exactly that moment.
+    refreshAccount().catch(() => {});
   } finally {
     setBusy(false);
   }
@@ -1197,6 +1186,7 @@ boostMatch.addEventListener('click', async () => {
   } catch (error) {
     progressHide(0);
     showError(generatedState, error.message || 'Could not boost the resume.');
+    refreshAccount().catch(() => {});
   } finally {
     setBusy(false);
   }

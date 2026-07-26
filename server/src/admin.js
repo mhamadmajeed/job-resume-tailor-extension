@@ -275,6 +275,79 @@ adminRouter.delete('/posts/:id', requireRole('owner', 'writer'), (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Discounts (owner only) - see DISCOUNT SPEC ----
+
+function mapDiscount(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    percentOff: row.percent_off,
+    appliesTo: row.applies_to,
+    active: Boolean(row.active),
+    stripeCouponId: row.stripe_coupon_id,
+    createdAt: row.created_at
+  };
+}
+
+adminRouter.get('/discounts', requireRole('owner'), (req, res) => {
+  const rows = db.prepare('SELECT * FROM discounts ORDER BY created_at DESC').all();
+  res.json(rows.map(mapDiscount));
+});
+
+adminRouter.post('/discounts', requireRole('owner'), (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const type = String(req.body?.type || '');
+  const percentOff = Number(req.body?.percent_off);
+  const appliesTo = String(req.body?.applies_to || 'both');
+
+  if (!name) return res.status(400).json({ error: 'name is required.' });
+  if (!['standard', 'urgency'].includes(type)) {
+    return res.status(400).json({ error: 'type must be standard or urgency.' });
+  }
+  if (!Number.isInteger(percentOff) || percentOff < 1 || percentOff > 90) {
+    return res.status(400).json({ error: 'percent_off must be an integer between 1 and 90.' });
+  }
+  if (!['both', 'pro', 'elite'].includes(appliesTo)) {
+    return res.status(400).json({ error: 'applies_to must be both, pro, or elite.' });
+  }
+
+  const id = uuid();
+  db.prepare(
+    'INSERT INTO discounts (id, name, type, percent_off, applies_to, active, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)'
+  ).run(id, name, type, percentOff, appliesTo, nowIso());
+
+  res.json(mapDiscount(db.prepare('SELECT * FROM discounts WHERE id = ?').get(id)));
+});
+
+// Activating a discount deactivates every other discount of the same type, so at most
+// one standard and one urgency discount can be active at once.
+adminRouter.post('/discounts/:id/activate', requireRole('owner'), (req, res) => {
+  const discount = db.prepare('SELECT * FROM discounts WHERE id = ?').get(req.params.id);
+  if (!discount) return res.status(404).json({ error: 'Discount not found.' });
+
+  db.prepare('UPDATE discounts SET active = 0 WHERE type = ? AND id != ?').run(discount.type, discount.id);
+  db.prepare('UPDATE discounts SET active = 1 WHERE id = ?').run(discount.id);
+  res.json(mapDiscount(db.prepare('SELECT * FROM discounts WHERE id = ?').get(discount.id)));
+});
+
+adminRouter.post('/discounts/:id/deactivate', requireRole('owner'), (req, res) => {
+  const discount = db.prepare('SELECT * FROM discounts WHERE id = ?').get(req.params.id);
+  if (!discount) return res.status(404).json({ error: 'Discount not found.' });
+
+  db.prepare('UPDATE discounts SET active = 0 WHERE id = ?').run(discount.id);
+  res.json(mapDiscount(db.prepare('SELECT * FROM discounts WHERE id = ?').get(discount.id)));
+});
+
+adminRouter.delete('/discounts/:id', requireRole('owner'), (req, res) => {
+  const discount = db.prepare('SELECT * FROM discounts WHERE id = ?').get(req.params.id);
+  if (!discount) return res.status(404).json({ error: 'Discount not found.' });
+
+  db.prepare('DELETE FROM visitor_offers WHERE discount_id = ?').run(discount.id);
+  db.prepare('DELETE FROM discounts WHERE id = ?').run(discount.id);
+  res.json({ ok: true });
+});
+
 // ---- Admins management ----
 
 adminRouter.get('/admins', requireRole('owner'), (req, res) => {
