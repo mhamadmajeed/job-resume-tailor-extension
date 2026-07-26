@@ -11,7 +11,9 @@ import { exchangeCodeForTokens, verifyGoogleIdToken } from './google.js';
 import { errorPage, deviceConnectedPage } from './pages.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WEB_DIR = path.join(__dirname, '..', '..', 'web');
+// web/ lives inside server/ because the Railway service builds from the server/
+// subdirectory only - anything outside it never reaches the container.
+const WEB_DIR = path.join(__dirname, '..', 'web');
 
 const app = express();
 const PORT = process.env.PORT || 8787;
