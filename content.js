@@ -258,7 +258,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (job) {
       sendResponse({ ok: true, job });
     } else {
-      sendResponse({ ok: false, error: 'Open a LinkedIn job posting first, then try again.' });
+      // Covers every failure: not on a job page, or on one whose detail pane
+      // has not rendered yet (SPA navigation, slow load) - a refresh fixes the latter.
+      sendResponse({ ok: false, error: 'Open a LinkedIn job posting first, then try again. Already on the job page? Refresh the page and try again.' });
     }
     return true;
   }

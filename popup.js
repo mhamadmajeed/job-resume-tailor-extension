@@ -1,4 +1,5 @@
 const resumeFile = document.querySelector('#resumeFile');
+const fileCta = document.querySelector('.file-cta');
 const clearResume = document.querySelector('#clearResume');
 const analyzeJob = document.querySelector('#analyzeJob');
 const saveState = document.querySelector('#saveState');
@@ -99,6 +100,9 @@ let currentDeviceId = '';
 let currentQuota = null;
 let currentAccount = null;
 let serverHasResume = false;
+// The server keeps a copy of the uploaded file itself, so "Download original
+// file" works on devices that never saw the local IndexedDB record.
+let serverHasResumeFile = false;
 let currentMatch = { before: null, after: null };
 let pollTimer = null;
 let isBusyState = false;
@@ -106,6 +110,36 @@ let boostLockedByPlan = false;
 
 function hasResume() {
   return Boolean(currentResumeText || serverHasResume);
+}
+
+function hasOriginalFile() {
+  return Boolean(currentOriginalResume || serverHasResumeFile);
+}
+
+// The file picker label doubles as the replace affordance once a resume exists.
+function renderFileCta() {
+  fileCta.textContent = hasResume() ? 'Upload new resume' : 'Choose file';
+}
+
+// Convert in 32KB slices; one String.fromCharCode call over a multi-megabyte
+// file would overflow the call stack.
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToBlob(base64, mime) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mime || 'application/octet-stream' });
 }
 
 function renderMatch() {
@@ -162,7 +196,7 @@ function setBusy(isBusy) {
   checkMatch.disabled = isBusy || !hasResume();
   boostMatch.disabled = isBusy || !currentGeneratedResume || boostLockedByPlan;
   clearResume.disabled = isBusy;
-  downloadOriginal.disabled = isBusy || !currentOriginalResume;
+  downloadOriginal.disabled = isBusy || !hasOriginalFile();
   downloadPdf.disabled = isBusy || !resumeDraft.value.trim();
   downloadDocx.disabled = isBusy || !resumeDraft.value.trim();
   chatSend.disabled = isBusy || !currentGeneratedResume;
@@ -339,10 +373,15 @@ async function restoreServerState() {
 
   if (state.resume) {
     storedResumeFilename = state.resume.filename || '';
+    serverHasResumeFile = Boolean(state.resume.hasFile);
     if (!currentOriginalResume) {
       saveState.textContent = `On file: ${state.resume.filename || 'your resume'}`;
     }
+  } else {
+    serverHasResumeFile = false;
   }
+  renderFileCta();
+  downloadOriginal.disabled = isBusyState || !hasOriginalFile();
 
   if (state.generation) {
     const restoredBody = stripWatermark(state.generation.text);
@@ -1036,9 +1075,10 @@ async function loadSavedState() {
   }
 
   updateDownloadButtons();
-  downloadOriginal.disabled = !currentOriginalResume;
+  downloadOriginal.disabled = !hasOriginalFile();
   analyzeJob.disabled = !hasResume();
   checkMatch.disabled = !hasResume();
+  renderFileCta();
 }
 
 async function getActiveJobText() {
@@ -1073,12 +1113,23 @@ resumeFile.addEventListener('change', async () => {
 
     currentResumeText = extractedText;
     await storeOriginalResume(file);
+    // Sync the file bytes too, so any signed-in device can re-download the original.
+    const fileBuffer = await readFileAsArrayBuffer(file);
     await apiFetch('/api/resume', {
       method: 'POST',
-      body: JSON.stringify({ filename: file.name, resumeText: extractedText })
+      body: JSON.stringify({
+        filename: file.name,
+        resumeText: extractedText,
+        originalFile: {
+          name: file.name,
+          mime: file.type || 'application/octet-stream',
+          data: arrayBufferToBase64(fileBuffer)
+        }
+      })
     });
 
     serverHasResume = true;
+    serverHasResumeFile = true;
     currentGeneratedResume = null;
     resumeDraft.value = '';
     chatLog.innerHTML = '';
@@ -1090,6 +1141,7 @@ resumeFile.addEventListener('change', async () => {
     generatedState.textContent = 'Resume saved. Open a job page and click Generate.';
     downloadOriginal.disabled = false;
     saveState.textContent = `On file: ${file.name}`;
+    renderFileCta();
   } catch (error) {
     saveState.textContent = error.message || 'Could not read file';
   } finally {
@@ -1102,6 +1154,7 @@ clearResume.addEventListener('click', async () => {
   await deleteResumeRecord();
   currentResumeText = '';
   serverHasResume = false;
+  serverHasResumeFile = false;
   currentGeneratedResume = null;
   currentOriginalResume = null;
   resumeDraft.value = '';
@@ -1111,6 +1164,7 @@ clearResume.addEventListener('click', async () => {
   analyzeJob.disabled = true;
   checkMatch.disabled = true;
   saveState.textContent = 'No resume yet';
+  renderFileCta();
   jobState.textContent = 'Open a job listing in this tab, then generate.';
   generatedState.textContent = 'No resume generated yet.';
   upsellPanel.classList.add('hidden');
@@ -1364,18 +1418,38 @@ downloadDocx.addEventListener('click', async () => {
 });
 
 downloadOriginal.addEventListener('click', async () => {
+  clearError(saveState);
   const file = currentOriginalResume || await readResumeRecord();
-  if (!file?.blob) {
+  if (file?.blob) {
+    const url = URL.createObjectURL(file.blob);
+    chrome.downloads.download({
+      url,
+      filename: file.name || 'original-resume',
+      saveAs: true
+    });
+    return;
+  }
+
+  if (!serverHasResumeFile) {
     saveState.textContent = 'No original file stored';
     return;
   }
 
-  const url = URL.createObjectURL(file.blob);
-  chrome.downloads.download({
-    url,
-    filename: file.name || 'original-resume',
-    saveAs: true
-  });
+  // No local copy on this device; pull the synced file from the server.
+  downloadOriginal.disabled = true;
+  try {
+    const remote = await apiFetch('/api/resume/file');
+    const url = URL.createObjectURL(base64ToBlob(remote.data, remote.mime));
+    chrome.downloads.download({
+      url,
+      filename: remote.name || 'original-resume',
+      saveAs: true
+    });
+  } catch (error) {
+    showError(saveState, error.message || 'Could not download the original file.');
+  } finally {
+    downloadOriginal.disabled = isBusyState || !hasOriginalFile();
+  }
 });
 
 async function init() {

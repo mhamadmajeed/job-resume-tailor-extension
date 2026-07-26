@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS resumes (
   user_id TEXT PRIMARY KEY REFERENCES users(id),
   filename TEXT,
   resume_text TEXT NOT NULL,
+  -- The uploaded file itself (original_data is base64), synced so any signed-in
+  -- device can re-download it; capped at ~5 MB.
+  original_name TEXT,
+  original_mime TEXT,
+  original_data TEXT,
   updated_at TEXT NOT NULL
 );
 

@@ -93,7 +93,9 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
   res.json({ received: true });
 }));
 
-app.use(express.json());
+// 12mb, not the ~100kb default: POST /resume can carry the uploaded file as base64
+// (up to ~5 MB of bytes, ~7 MB encoded) and the default limit would 413 every upload.
+app.use(express.json({ limit: '12mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const PERIOD_DAYS = 30;
@@ -638,7 +640,9 @@ authed.get('/me', (req, res) => {
 authed.get('/state', (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
-  const resumeRow = db.prepare('SELECT filename, updated_at FROM resumes WHERE user_id = ?').get(ownerId);
+  const resumeRow = db.prepare(
+    'SELECT filename, updated_at, original_data IS NOT NULL AS has_file FROM resumes WHERE user_id = ?'
+  ).get(ownerId);
   const generation = db.prepare(
     'SELECT id, job_title, job_url, current_text, match_before, match_after, updated_at FROM generations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1'
   ).get(ownerId);
@@ -648,7 +652,7 @@ authed.get('/state', (req, res) => {
 
   res.json({
     user: userSummary(user),
-    resume: resumeRow ? { filename: resumeRow.filename, updatedAt: resumeRow.updated_at } : null,
+    resume: resumeRow ? { filename: resumeRow.filename, updatedAt: resumeRow.updated_at, hasFile: Boolean(resumeRow.has_file) } : null,
     generation: generation
       ? {
           id: generation.id,
@@ -671,10 +675,29 @@ authed.post('/resume', requireAccount, (req, res) => {
   const filename = String(req.body.filename || 'resume').slice(0, 200);
   if (!text) return res.status(400).json({ error: 'resumeText is required.' });
 
+  // Optional original file (base64, no data: prefix), synced so any signed-in
+  // device can re-download it. A text-only save nulls the columns on purpose:
+  // it replaces any stale file from a previous upload.
+  const file = req.body.originalFile;
+  let originalName = null;
+  let originalMime = null;
+  let originalData = null;
+  if (file && typeof file.data === 'string' && file.data) {
+    if (file.data.length > 7_000_000) {
+      return res.status(413).json({ error: 'Resume file is too large (5 MB max).' });
+    }
+    originalName = String(file.name || filename).slice(0, 200);
+    originalMime = String(file.mime || 'application/octet-stream').slice(0, 100);
+    originalData = file.data;
+  }
+
   db.prepare(
-    `INSERT INTO resumes (user_id, filename, resume_text, updated_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET filename = excluded.filename, resume_text = excluded.resume_text, updated_at = excluded.updated_at`
-  ).run(ownerId, filename, text, nowIso());
+    `INSERT INTO resumes (user_id, filename, resume_text, original_name, original_mime, original_data, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET filename = excluded.filename, resume_text = excluded.resume_text,
+       original_name = excluded.original_name, original_mime = excluded.original_mime,
+       original_data = excluded.original_data, updated_at = excluded.updated_at`
+  ).run(ownerId, filename, text, originalName, originalMime, originalData, nowIso());
 
   // A different resume invalidates every cached check score.
   db.prepare('DELETE FROM match_checks WHERE user_id = ?').run(ownerId);
@@ -687,6 +710,17 @@ authed.delete('/resume', requireAccount, (req, res) => {
   db.prepare('DELETE FROM resumes WHERE user_id = ?').run(ownerId);
   db.prepare('DELETE FROM match_checks WHERE user_id = ?').run(ownerId);
   res.json({ ok: true });
+});
+
+// The uploaded file itself, for "Download original file" on a device that never
+// held the local copy. Served on demand; /state only carries a hasFile flag.
+authed.get('/resume/file', requireAccount, (req, res) => {
+  const ownerId = resolveOwnerId(req.deviceId);
+  const row = db.prepare(
+    'SELECT original_name, original_mime, original_data FROM resumes WHERE user_id = ?'
+  ).get(ownerId);
+  if (!row || !row.original_data) return res.status(404).json({ error: 'No resume file on file.' });
+  res.json({ name: row.original_name, mime: row.original_mime, data: row.original_data });
 });
 
 authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRoute(async (req, res) => {

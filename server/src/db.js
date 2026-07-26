@@ -47,7 +47,10 @@ for (const statement of [
   'ALTER TABLE plan_settings ADD COLUMN match_limit INTEGER',
   'ALTER TABLE users ADD COLUMN match_checks_used INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE users ADD COLUMN match_checks_today INTEGER NOT NULL DEFAULT 0',
-  'ALTER TABLE users ADD COLUMN match_checks_day TEXT'
+  'ALTER TABLE users ADD COLUMN match_checks_day TEXT',
+  'ALTER TABLE resumes ADD COLUMN original_name TEXT',
+  'ALTER TABLE resumes ADD COLUMN original_mime TEXT',
+  'ALTER TABLE resumes ADD COLUMN original_data TEXT'
 ]) {
   try {
     db.exec(statement);
