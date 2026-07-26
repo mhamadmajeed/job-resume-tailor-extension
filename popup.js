@@ -29,6 +29,16 @@ const matchedChips = document.querySelector('#matchedChips');
 const missingChips = document.querySelector('#missingChips');
 const maxIntensityOption = document.querySelector('#maxIntensityOption');
 const ultraIntensityOption = document.querySelector('#ultraIntensityOption');
+const shell = document.querySelector('.shell');
+const signinPanel = document.querySelector('#signinPanel');
+const signinButton = document.querySelector('#signinButton');
+const signinHint = document.querySelector('#signinHint');
+
+// Shell sections that are visible by default. Captured once at load so signing in
+// never force-shows panels other code toggles on its own (result, upsell).
+const defaultVisibleSections = Array.from(shell.children).filter(
+  (el) => el !== signinPanel && !el.classList.contains('hidden')
+);
 
 let progressTimer = null;
 
@@ -125,8 +135,8 @@ function hideMatchCheck() {
   missingChips.innerHTML = '';
 }
 
-// No accounts: a random id is generated once per browser install and sent on every
-// request so the backend can track free-tier usage and Stripe subscription status.
+// A random id is generated once per browser install and sent on every request; the
+// backend maps it to the Google account the user links during mandatory sign-in.
 async function getOrCreateDeviceId() {
   const stored = await chrome.storage.local.get(['deviceId']);
   if (stored.deviceId) return stored.deviceId;
@@ -193,6 +203,8 @@ async function apiFetch(path, options = {}) {
   }
 
   if (!response.ok) {
+    // Any endpoint can answer "sign in first"; flip the popup to the gate.
+    if (data?.code === 'SIGNIN_REQUIRED') setSignedInUI(false);
     throw new Error(data?.error || `Request failed (${response.status}).`);
   }
   return data;
@@ -250,6 +262,21 @@ async function refreshAccount() {
   renderQuota();
 }
 
+// Signed-out mode hides every top-level shell section except the topbar branding
+// and the sign-in gate. Signed-in mode restores only the sections that are visible
+// by default; conditional panels (result, upsell) stay under their own logic.
+function setSignedInUI(signedIn) {
+  Array.from(shell.children).forEach((el) => {
+    if (el === signinPanel || el.tagName === 'HEADER') return;
+    if (!signedIn) {
+      el.classList.add('hidden');
+    } else if (defaultVisibleSections.includes(el)) {
+      el.classList.remove('hidden');
+    }
+  });
+  signinPanel.classList.toggle('hidden', signedIn);
+}
+
 // Pulls plan, stored resume, and the latest generation from the server so closing
 // and reopening the popup never loses the user's work.
 async function restoreServerState() {
@@ -266,6 +293,8 @@ async function restoreServerState() {
     currentAccount = null;
     syncButton.classList.remove('hidden');
   }
+
+  setSignedInUI(Boolean(state.account));
 
   if (state.resume) {
     storedResumeFilename = state.resume.filename || '';
@@ -303,9 +332,10 @@ function stopPolling() {
 }
 
 // Device-code style handshake: open the Google Sign-In tab, then poll link/status
-// every 2s until the device is linked (or the 10-minute link expires).
-syncButton.addEventListener('click', async () => {
-  syncButton.disabled = true;
+// every 2s until the device is linked (or the 10-minute link expires). Shared by
+// the header sync button and the sign-in gate button.
+async function startSignIn(button) {
+  button.disabled = true;
   try {
     const r = await apiFetch('/api/link/start', { method: 'POST', body: JSON.stringify({}) });
     await chrome.tabs.create({ url: r.linkUrl });
@@ -320,7 +350,7 @@ syncButton.addEventListener('click', async () => {
         if (s.status === 'consumed') {
           stopPolling();
           await restoreServerState();
-          syncButton.disabled = false;
+          button.disabled = false;
           return;
         }
       } catch (_pollError) {
@@ -328,14 +358,17 @@ syncButton.addEventListener('click', async () => {
       }
       if (attempts >= maxAttempts) {
         stopPolling();
-        syncButton.disabled = false;
+        button.disabled = false;
       }
     }, 2000);
   } catch (error) {
     quotaState.textContent = error.message || 'Could not start sync.';
-    syncButton.disabled = false;
+    button.disabled = false;
   }
-});
+}
+
+syncButton.addEventListener('click', () => startSignIn(syncButton));
+signinButton.addEventListener('click', () => startSignIn(signinButton));
 
 upgradeButton.addEventListener('click', async () => {
   upgradeButton.disabled = true;
@@ -1303,7 +1336,10 @@ async function init() {
     analyzeJob.disabled = !hasResume();
     checkMatch.disabled = !hasResume();
   } catch (error) {
-    quotaState.textContent = error.message || 'Could not reach the server.';
+    // Can't tell if the device is linked, so fall back to the gate and surface
+    // the problem on its hint line.
+    setSignedInUI(false);
+    showError(signinHint, error.message || 'Could not reach the server.');
   }
 }
 

@@ -544,10 +544,20 @@ app.get('/api/offer', (req, res) => {
   res.json(response);
 });
 
-// ---- Authenticated (device-id) API - used by the extension, no sign-in required ----
+// ---- Device-id API - used by the extension; work routes also require sign-in ----
 
 const authed = express.Router();
 authed.use(deviceAuth);
+
+// Product rule: sign-in is required for all tool usage, even free features.
+// /me, /state and the link handshake stay open so the popup can render the
+// sign-in screen and run the device-link handshake.
+function requireAccount(req, res, next) {
+  if (resolveOwnerId(req.deviceId) === req.deviceId) {
+    return res.status(401).json({ error: 'Sign in with Google to use ResumePilot.', code: 'SIGNIN_REQUIRED' });
+  }
+  next();
+}
 
 authed.get('/me', (req, res) => {
   res.json(userSummary(getOrCreateUser(resolveOwnerId(req.deviceId))));
@@ -584,7 +594,7 @@ authed.get('/state', (req, res) => {
   });
 });
 
-authed.post('/resume', (req, res) => {
+authed.post('/resume', requireAccount, (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   getOrCreateUser(ownerId);
   const text = String(req.body.resumeText || '').trim();
@@ -602,14 +612,14 @@ authed.post('/resume', (req, res) => {
   res.json({ ok: true });
 });
 
-authed.delete('/resume', (req, res) => {
+authed.delete('/resume', requireAccount, (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   db.prepare('DELETE FROM resumes WHERE user_id = ?').run(ownerId);
   db.prepare('DELETE FROM match_checks WHERE user_id = ?').run(ownerId);
   res.json({ ok: true });
 });
 
-authed.post('/generate', rateLimit('generate', 30, 120), asyncRoute(async (req, res) => {
+authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   if (user.status === 'paused') {
@@ -662,7 +672,7 @@ authed.post('/generate', rateLimit('generate', 30, 120), asyncRoute(async (req, 
 }));
 
 // Score-only check: one Claude call, no rewriting, nothing stored, no quota used.
-authed.post('/match', rateLimit('match', 40, 200), asyncRoute(async (req, res) => {
+authed.post('/match', requireAccount, rateLimit('match', 40, 200), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   if (user.status === 'paused') {
@@ -686,7 +696,7 @@ authed.post('/match', rateLimit('match', 40, 200), asyncRoute(async (req, res) =
   });
 }));
 
-authed.post('/revise', rateLimit('revise', 40, 200), asyncRoute(async (req, res) => {
+authed.post('/revise', requireAccount, rateLimit('revise', 40, 200), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   if (user.status === 'paused') {
@@ -716,7 +726,7 @@ authed.post('/revise', rateLimit('revise', 40, 200), asyncRoute(async (req, res)
   });
 }));
 
-authed.post('/boost', rateLimit('boost', 30, 120), asyncRoute(async (req, res) => {
+authed.post('/boost', requireAccount, rateLimit('boost', 30, 120), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   if (user.status === 'paused') {
@@ -754,7 +764,7 @@ authed.post('/boost', rateLimit('boost', 30, 120), asyncRoute(async (req, res) =
   });
 }));
 
-authed.post('/checkout', asyncRoute(async (req, res) => {
+authed.post('/checkout', requireAccount, asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   const plan = req.body?.plan === 'elite' ? 'elite' : 'pro';

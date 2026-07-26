@@ -679,3 +679,22 @@ button.boost:hover:not(:disabled) {
 .editor textarea:focus {
   border-color: var(--accent-solid);
 }
+
+/* ---- Sign-in gate ---- */
+
+.signin-panel {
+  align-items: center;
+  text-align: center;
+  padding: 22px 16px;
+}
+
+.signin-panel h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.signin-panel .primary {
+  align-self: stretch;
+  margin-top: 4px;
+}

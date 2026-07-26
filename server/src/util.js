@@ -10,9 +10,10 @@ export function nowIso() {
 
 const DEVICE_ID_PATTERN = /^[a-zA-Z0-9-]{8,64}$/;
 
-// No accounts: the extension generates a random device id once and sends it on every
-// request. It identifies a browser install for quota stats and Stripe subscription
-// lookups, not a person - there's nothing secret to sign or verify.
+// The extension generates a random device id once and sends it on every request. It
+// identifies a browser install, not a person - there's nothing secret to sign or
+// verify. Sign-in is enforced separately: work routes require the device to be
+// linked to a Google account (see requireAccount in index.js).
 export function deviceAuth(req, res, next) {
   const deviceId = String(req.headers['x-device-id'] || '').trim();
   if (!DEVICE_ID_PATTERN.test(deviceId)) {
