@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>promo video renderer</title></head>
+<body style="background:#0a0e1a;color:#9b8afd;font-family:monospace">
+<canvas id="c" width="1280" height="720" style="width:640px"></canvas>
+<pre id="log"></pre>
+<script>
+const FPS = 30, DUR = 26, W = 1280, H = 720;
+const TOTAL = FPS * DUR;
+const c = document.querySelector('#c');
+const ctx = c.getContext('2d');
+const log = (m) => { document.querySelector('#log').textContent = m; document.title = m; };
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const ease = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // cubic in-out
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+// progress of a scene segment: 0 before start, 1 after start+len
+const seg = (t, start, len) => clamp((t - start) / len, 0, 1);
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+function brandGrad(x0, y0, x1, y1) {
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  g.addColorStop(0, '#7c5cff'); g.addColorStop(1, '#22d3ee');
+  return g;
+}
+function glow(x, y, r, color) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+// deterministic star positions so they do not flicker between frames
+const STARS = Array.from({ length: 110 }, (_, i) => {
+  const s = Math.sin(i * 999.7) * 43758.5453;
+  const q = Math.sin(i * 78.233) * 12543.123;
+  return { x: (s - Math.floor(s)) * W, y: (q - Math.floor(q)) * H, r: Math.abs(s * 7) % 1.6 + 0.4, a: 0.04 + Math.abs(q * 5) % 0.07 };
+});
+
+function background(t) {
+  ctx.fillStyle = '#0a0e1a'; ctx.fillRect(0, 0, W, H);
+  glow(W * 0.88 + Math.sin(t * 0.35) * 30, H * 0.14, 460, 'rgba(124,92,255,0.30)');
+  glow(W * 0.10, H * 0.92 + Math.cos(t * 0.3) * 24, 400, 'rgba(34,211,238,0.20)');
+  for (const s of STARS) {
+    ctx.fillStyle = `rgba(155,138,253,${s.a * (0.7 + 0.3 * Math.sin(t * 2 + s.x))})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawLogo(cx, cy, size, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const x = cx - size / 2, y = cy - size / 2;
+  roundRect(x, y, size, size, size * 0.2);
+  ctx.fillStyle = brandGrad(x, y, x + size, y + size); ctx.fill();
+  ctx.fillStyle = '#05070d';
+  ctx.font = `800 ${size * 0.46}px "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('RP', cx, cy + size * 0.03);
+  ctx.restore();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+
+function fadeText(text, x, y, font, color, p, slide = 24) {
+  if (p <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = easeOut(p);
+  ctx.font = font;
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y + (1 - easeOut(p)) * slide);
+  ctx.restore();
+}
+
+function centeredFade(text, cx, y, font, color, p, slide = 24) {
+  ctx.textAlign = 'center';
+  fadeText(text, cx, y, font, color, p, slide);
+  ctx.textAlign = 'left';
+}
+
+function checkboxRow(x, y, label, p) {
+  if (p <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = easeOut(clamp(p * 2, 0, 1));
+  roundRect(x, y, 30, 30, 7);
+  ctx.fillStyle = '#121830'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2; ctx.stroke();
+  const tick = seg(p, 0.35, 0.5);
+  if (tick > 0) {
+    roundRect(x, y, 30, 30, 7);
+    ctx.fillStyle = brandGrad(x, y, x + 30, y + 30); ctx.fill();
+    ctx.strokeStyle = '#05070d'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.beginPath();
+    const t1 = clamp(tick * 2, 0, 1), t2 = clamp(tick * 2 - 1, 0, 1);
+    ctx.moveTo(x + 7, y + 16);
+    ctx.lineTo(x + 7 + 6 * t1, y + 16 + 6 * t1);
+    if (t2 > 0) ctx.lineTo(x + 13 + 11 * t2, y + 22 - 12 * t2);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#eef1f8'; ctx.font = '600 26px "Segoe UI", sans-serif';
+  ctx.fillText(label, x + 46, y + 23);
+  ctx.restore();
+}
+
+function matchRing(cx, cy, r, score, p) {
+  ctx.save();
+  ctx.lineWidth = 12; ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+  const frac = score / 100;
+  ctx.strokeStyle = brandGrad(cx - r, cy - r, cx + r, cy + r);
+  ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac * p);
+  ctx.stroke();
+  ctx.fillStyle = '#eef1f8';
+  ctx.font = `800 ${r * 0.62}px "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(Math.round(score * p) + '%', cx, cy - r * 0.08);
+  ctx.fillStyle = '#97a1b8'; ctx.font = `600 ${r * 0.18}px "Segoe UI", sans-serif`;
+  ctx.fillText('JOB MATCH', cx, cy + r * 0.32);
+  ctx.restore();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+
+function draw(frame) {
+  const t = frame / FPS;
+  background(t);
+
+  // Scene 1 (0-3.5s): logo + name + tagline
+  if (t < 3.5) {
+    const p = seg(t, 0.1, 0.9);
+    const out = seg(t, 2.9, 0.6);
+    ctx.save();
+    ctx.globalAlpha = 1 - ease(out);
+    drawLogo(W / 2, 260, 40 + 120 * easeOut(p), Math.min(1, p * 2));
+    centeredFade('ResumePilot', W / 2, 420, '800 64px "Segoe UI", sans-serif', '#eef1f8', seg(t, 0.7, 0.8));
+    centeredFade('Land more interviews.', W / 2, 480, '400 30px "Segoe UI", sans-serif', '#97a1b8', seg(t, 1.2, 0.8));
+    ctx.restore();
+  }
+
+  // Scene 2 (3.5-9s): headline + three bullets
+  if (t >= 3.3 && t < 9.2) {
+    const out = seg(t, 8.6, 0.6);
+    ctx.save();
+    ctx.globalAlpha = 1 - ease(out);
+    centeredFade('Tailor your resume', W / 2, 250, '800 76px "Segoe UI", sans-serif', '#eef1f8', seg(t, 3.6, 0.7));
+    ctx.textAlign = 'center';
+    if (seg(t, 4.0, 0.7) > 0) {
+      ctx.save();
+      ctx.globalAlpha *= easeOut(seg(t, 4.0, 0.7));
+      ctx.font = '800 76px "Segoe UI", sans-serif';
+      ctx.fillStyle = brandGrad(W / 2 - 340, 0, W / 2 + 340, 0);
+      ctx.fillText('to any job in one click', W / 2, 340 + (1 - easeOut(seg(t, 4.0, 0.7))) * 24);
+      ctx.restore();
+    }
+    ctx.textAlign = 'left';
+    const bullets = ['AI rewrite in seconds', 'Match score + missing keywords', 'Polished PDF and DOCX'];
+    bullets.forEach((b, i) => {
+      const bp = seg(t, 5.0 + i * 0.55, 0.6);
+      if (bp <= 0) return;
+      ctx.save();
+      ctx.globalAlpha *= easeOut(bp);
+      roundRect(W / 2 - 250, 420 + i * 62 - 20, 10, 10, 5);
+      ctx.fillStyle = '#22d3ee'; ctx.fill();
+      ctx.fillStyle = '#c9d2e8'; ctx.font = '500 30px "Segoe UI", sans-serif';
+      ctx.fillText(b, W / 2 - 222, 420 + i * 62);
+      ctx.restore();
+    });
+    ctx.restore();
+  }
+
+  // Scene 3 (9.2-16s): match ring counts up + boost pulse
+  if (t >= 9.0 && t < 16.2) {
+    const out = seg(t, 15.6, 0.6);
+    ctx.save();
+    ctx.globalAlpha = 1 - ease(out);
+    centeredFade('Watch your match score jump', W / 2, 170, '800 56px "Segoe UI", sans-serif', '#eef1f8', seg(t, 9.3, 0.7));
+    const ringP = easeOut(seg(t, 9.9, 2.2));
+    // score climbs 0 -> 62 quickly, pauses, then boost to 87
+    const boost = seg(t, 13.2, 1.4);
+    const score = 62 + 25 * easeOut(boost);
+    matchRing(W / 2, 400, 130, score, ringP);
+    if (boost > 0 && boost < 1) {
+      ctx.save();
+      ctx.globalAlpha *= 0.5 + 0.5 * Math.sin(t * 12);
+      glow(W / 2, 400, 220, 'rgba(124,92,255,0.35)');
+      ctx.restore();
+    }
+    const label = boost > 0 ? 'Boosted' : 'After tailoring';
+    centeredFade(label, W / 2, 590, '600 26px "Segoe UI", sans-serif', boost > 0 ? '#22d3ee' : '#97a1b8', seg(t, 10.4, 0.6), 10);
+    centeredFade('Then hit Boost, or refine with AI chat', W / 2, 640, '400 24px "Segoe UI", sans-serif', '#97a1b8', seg(t, 12.4, 0.8));
+    ctx.restore();
+  }
+
+  // Scene 4 (16.2-21s): ATS + recruiter checkboxes
+  if (t >= 16.0 && t < 21.2) {
+    const out = seg(t, 20.6, 0.6);
+    ctx.save();
+    ctx.globalAlpha = 1 - ease(out);
+    centeredFade('Beat the bots.', W / 2, 220, '800 60px "Segoe UI", sans-serif', '#eef1f8', seg(t, 16.3, 0.6));
+    ctx.textAlign = 'center';
+    ctx.save();
+    ctx.globalAlpha *= easeOut(seg(t, 16.7, 0.6));
+    ctx.font = '800 60px "Segoe UI", sans-serif';
+    ctx.fillStyle = brandGrad(W / 2 - 260, 0, W / 2 + 260, 0);
+    ctx.fillText('Impress the humans.', W / 2, 300 + (1 - easeOut(seg(t, 16.7, 0.6))) * 24);
+    ctx.restore();
+    ctx.textAlign = 'left';
+    checkboxRow(W / 2 - 190, 400, 'ATS Match', seg(t, 17.4, 1.2));
+    checkboxRow(W / 2 - 190, 470, 'Human recruiter match', seg(t, 18.1, 1.2));
+    centeredFade('Exact keywords for the screeners. Sharp bullets for the skim.', W / 2, 590, '400 24px "Segoe UI", sans-serif', '#97a1b8', seg(t, 19.0, 0.8));
+    ctx.restore();
+  }
+
+  // Scene 5 (21.2-26s): CTA
+  if (t >= 21.0) {
+    const p = seg(t, 21.3, 0.8);
+    const fade = seg(t, 25.3, 0.7);
+    ctx.save();
+    ctx.globalAlpha = (1 - ease(fade));
+    drawLogo(W / 2, 250, 130, easeOut(p));
+    centeredFade('resumepilot.co', W / 2, 400, '800 58px "Segoe UI", sans-serif', '#eef1f8', seg(t, 21.7, 0.7));
+    ctx.textAlign = 'center';
+    ctx.save();
+    ctx.globalAlpha *= easeOut(seg(t, 22.3, 0.7));
+    roundRect(W / 2 - 260, 440, 520, 64, 32);
+    ctx.fillStyle = brandGrad(W / 2 - 260, 440, W / 2 + 260, 504); ctx.fill();
+    ctx.fillStyle = '#05070d'; ctx.font = '700 28px "Segoe UI", sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Free: 5 tailored resumes a month', W / 2, 473);
+    ctx.restore();
+    ctx.textBaseline = 'alphabetic';
+    centeredFade('Add ResumePilot to Chrome', W / 2, 560, '400 24px "Segoe UI", sans-serif', '#97a1b8', seg(t, 23.0, 0.7));
+    ctx.restore();
+  }
+}
+
+async function postFrame(frame) {
+  draw(frame);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92));
+  const name = 'frame-' + String(frame).padStart(4, '0') + '.jpg';
+  await fetch('/save?name=' + name, { method: 'POST', body: blob });
+}
+
+window.renderVideo = () => {
+  (async () => {
+    for (let f = 0; f < TOTAL; f += 1) {
+      await postFrame(f);
+      if (f % 30 === 0) log('frame ' + f + '/' + TOTAL);
+    }
+    log('VIDEO-FRAMES-DONE');
+  })();
+  return 'started ' + TOTAL + ' frames';
+};
+</script>
+</body>
+</html>
