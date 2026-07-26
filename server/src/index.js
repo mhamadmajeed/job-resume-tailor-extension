@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import express from 'express';
 import { db } from './db.js';
 import { uuid, nowIso, deviceAuth, accountAuth, signToken, asyncRoute } from './util.js';
@@ -7,6 +9,9 @@ import { tailorResume, reviseResume, boostResume, scoreMatch } from './claude.js
 import { createCheckoutSession, verifyStripeWebhook } from './stripe.js';
 import { exchangeCodeForTokens, verifyGoogleIdToken } from './google.js';
 import { errorPage, deviceConnectedPage } from './pages.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const WEB_DIR = path.join(__dirname, '..', '..', 'web');
 
 const app = express();
 const PORT = process.env.PORT || 8787;
@@ -265,6 +270,9 @@ authed.get('/state', (req, res) => {
   const generation = db.prepare(
     'SELECT id, job_title, job_url, current_text, match_before, match_after, updated_at FROM generations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1'
   ).get(ownerId);
+  const accountRow = db.prepare(
+    'SELECT a.email, a.name FROM devices d JOIN accounts a ON a.id = d.account_id WHERE d.device_id = ?'
+  ).get(req.deviceId);
 
   res.json({
     user: userSummary(user),
@@ -279,7 +287,8 @@ authed.get('/state', (req, res) => {
           matchAfter: generation.match_after,
           updatedAt: generation.updated_at
         }
-      : null
+      : null,
+    account: accountRow ? { email: accountRow.email, name: accountRow.name } : null
   });
 });
 
@@ -527,6 +536,11 @@ app.use('/account', account);
 
 app.get('/billing/success', (req, res) => res.send('<h1>Payment successful</h1><p>Go back to the extension - your plan will update within a few seconds.</p>'));
 app.get('/billing/cancel', (req, res) => res.send('<h1>Checkout canceled</h1><p>No charge was made. You can close this tab.</p>'));
+
+// ---- Website (static files) ----
+
+app.use(express.static(WEB_DIR));
+app.get('/dashboard', (req, res) => res.sendFile(path.join(WEB_DIR, 'dashboard.html')));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found.' }));
 

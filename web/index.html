@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Resume Tailor - Tailor your resume to any job with AI</title>
+    <meta name="description" content="Resume Tailor checks your match score against any LinkedIn job, closes the keyword gaps, and generates a tailored PDF in one click.">
+    <link rel="stylesheet" href="site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container nav">
+        <a class="brand" href="/">
+          <span class="logo" aria-hidden="true">RT</span>
+          <span class="wordmark">Resume Tailor</span>
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="#pricing">Pricing</a>
+          <a href="/dashboard">Dashboard</a>
+          <a id="signInLink" class="btn primary" href="/auth/google/start">Sign in</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <!-- ---- Hero ---- -->
+      <section class="hero">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <span class="eyebrow">AI resume tailoring</span>
+            <h1>Tailor your resume to <span>every job</span>, in one click.</h1>
+            <p>
+              Open any LinkedIn listing and Resume Tailor shows your live match score, before and after,
+              plus the exact keywords you're missing. Pick an intensity and get a clean, tailored PDF
+              built from your real experience in seconds.
+            </p>
+            <div class="hero-actions">
+              <a class="btn primary large" href="https://github.com/mhamadmajeed/job-resume-tailor-extension" target="_blank" rel="noopener">Add to Chrome - it's free</a>
+              <a class="btn ghost large" href="#how-it-works">See how it works</a>
+            </div>
+            <p class="hero-note">Chrome Web Store listing coming soon. For now, install straight from GitHub.</p>
+          </div>
+
+          <div class="mock-popup card" aria-hidden="true">
+            <div class="mock-popup-head">
+              <span class="logo logo-sm">RT</span>
+              <div>
+                <strong>Resume Tailor</strong>
+                <small>Job match preview</small>
+              </div>
+            </div>
+            <div class="mock-score-row">
+              <div class="mock-score before">
+                <span class="mock-score-value">45%</span>
+                <span class="mock-score-label">Before</span>
+              </div>
+              <span class="mock-arrow">&rarr;</span>
+              <div class="mock-score after">
+                <span class="mock-score-value">78%</span>
+                <span class="mock-score-label">After tailoring</span>
+              </div>
+            </div>
+            <div class="mock-bar-track"><div class="mock-bar-fill"></div></div>
+            <div class="mock-chips">
+              <span class="chip ok">React</span>
+              <span class="chip ok">Node.js</span>
+              <span class="chip gap">Docker</span>
+              <span class="chip gap">CI/CD</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---- How it works ---- -->
+      <section id="how-it-works" class="section section-tight">
+        <div class="container">
+          <div class="section-head">
+            <span class="eyebrow">How it works</span>
+            <h2>From resume to tailored PDF in three steps</h2>
+          </div>
+          <div class="steps">
+            <div class="step card">
+              <div class="step-num">1</div>
+              <h3>Upload your resume once</h3>
+              <p>Add your PDF, DOCX, or text resume to the extension. It's saved to your account so you never have to re-upload it.</p>
+            </div>
+            <div class="step card">
+              <div class="step-num">2</div>
+              <h3>Open a LinkedIn job</h3>
+              <p>Click the extension on any LinkedIn job page. It reads the listing right there and checks your match instantly.</p>
+            </div>
+            <div class="step card">
+              <div class="step-num">3</div>
+              <h3>Get your tailored PDF + score</h3>
+              <p>Pick an intensity, generate, and download a clean tailored PDF along with your before-and-after match score.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---- Features ---- -->
+      <section class="section">
+        <div class="container">
+          <div class="section-head">
+            <span class="eyebrow">Features</span>
+            <h2>Everything you need to apply with confidence</h2>
+            <p>Built around the parts of tailoring that actually move the needle with recruiters and applicant tracking systems.</p>
+          </div>
+          <div class="features">
+            <div class="feature-card card">
+              <div class="feature-icon">%</div>
+              <h3>Live match check</h3>
+              <p>See your match score against the job instantly, with chips for keywords you already have and ones you're missing.</p>
+            </div>
+            <div class="feature-card card">
+              <div class="feature-icon">4</div>
+              <h3>Four tailoring intensities</h3>
+              <p>Light, Medium, Max, or Ultra - choose how hard the AI reframes your resume toward the job description.</p>
+            </div>
+            <div class="feature-card card">
+              <div class="feature-icon">&uarr;</div>
+              <h3>Boost</h3>
+              <p>Already generated a resume? Hit Boost to push your match score even higher without starting over.</p>
+            </div>
+            <div class="feature-card card">
+              <div class="feature-icon">&hellip;</div>
+              <h3>Chat refinement</h3>
+              <p>Ask for changes in plain language, like "make the summary shorter," and refine your tailored resume by chatting.</p>
+            </div>
+            <div class="feature-card card">
+              <div class="feature-icon">PDF</div>
+              <h3>Clean PDFs that keep your links</h3>
+              <p>Download a polished, ATS-friendly PDF that preserves your clickable links to your portfolio, LinkedIn, and GitHub.</p>
+            </div>
+            <div class="feature-card card">
+              <div class="feature-icon">DB</div>
+              <h3>Everything synced to your dashboard</h3>
+              <p>Every tailored resume, score, and job link is saved to your account dashboard so you can find it again later.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---- Pricing ---- -->
+      <section id="pricing" class="section">
+        <div class="container">
+          <div class="section-head">
+            <span class="eyebrow">Pricing</span>
+            <h2>Start free. Upgrade when you need more.</h2>
+            <p>Every plan includes the full feature set - match check, all four intensities, Boost, and chat refinement.</p>
+          </div>
+          <div class="pricing-grid">
+            <div class="price-card card">
+              <div class="price-card-head">
+                <h3>Free</h3>
+                <p class="muted">Good for an active job search on the side.</p>
+                <div class="price-tag">
+                  <span class="price-amount">$0</span>
+                  <span class="price-period">/ month</span>
+                </div>
+              </div>
+              <ul class="price-list">
+                <li>5 tailored resumes / month</li>
+                <li>Live match check with keyword chips</li>
+                <li>All 4 tailoring intensities</li>
+                <li>Boost and chat refinement</li>
+                <li>Dashboard sync</li>
+              </ul>
+              <a class="btn ghost block" href="https://github.com/mhamadmajeed/job-resume-tailor-extension" target="_blank" rel="noopener">Add to Chrome - it's free</a>
+            </div>
+            <div class="price-card featured card">
+              <div class="price-card-head">
+                <h3>Pro</h3>
+                <p class="muted">For a serious search across many applications a month.</p>
+                <div class="price-tag">
+                  <span class="price-amount">$29</span>
+                  <span class="price-period">/ month</span>
+                </div>
+              </div>
+              <ul class="price-list">
+                <li>100 tailored resumes / month</li>
+                <li>Everything in Free</li>
+                <li>Priority support</li>
+              </ul>
+              <p class="price-note">Upgrade in app - sign in and manage billing from your dashboard. No checkout here.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---- FAQ ---- -->
+      <section id="faq" class="section section-tight">
+        <div class="container">
+          <div class="section-head">
+            <span class="eyebrow">FAQ</span>
+            <h2>Questions people ask before installing</h2>
+          </div>
+          <div class="faq-list">
+            <details class="faq-item card">
+              <summary>Does it invent experience I don't have?</summary>
+              <p>No. Resume Tailor only reframes real experience already in your resume to match the language of the job. Ultra pushes that framing the hardest of the four intensities, but no intensity fabricates skills, jobs, or accomplishments you didn't have.</p>
+            </details>
+            <details class="faq-item card">
+              <summary>Which job sites does it work on?</summary>
+              <p>It's built and tested for LinkedIn job pages, where it works best. Other job boards are supported on a best-effort basis, since every site formats its listings differently.</p>
+            </details>
+            <details class="faq-item card">
+              <summary>Where is my data stored?</summary>
+              <p>Your resume and job data are stored securely and are only used to generate your tailored resumes.</p>
+            </details>
+            <details class="faq-item card">
+              <summary>How do match scores work?</summary>
+              <p>Each score comes from a strict, recruiter-calibrated AI rubric. The same rubric is used before and after tailoring, so the improvement you see reflects a real difference, not a looser second pass.</p>
+            </details>
+            <details class="faq-item card">
+              <summary>Do I need Chrome to use it?</summary>
+              <p>Right now Resume Tailor is a Chrome extension, installed from GitHub while the Chrome Web Store listing is in progress. A Chrome Web Store listing is coming soon.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>&copy; <span id="year"></span> Resume Tailor. All rights reserved.</p>
+        <div class="footer-links">
+          <a href="https://github.com/mhamadmajeed/job-resume-tailor-extension" target="_blank" rel="noopener">GitHub</a>
+          <a href="/dashboard">Dashboard</a>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      // "Sign in" always points at /auth/google/start. We set the redirect param at
+      // runtime (rather than hardcoding it) so the link works the same on localhost,
+      // staging, and production without a build step. The backend 302s back to this
+      // URL with #token=<sessionToken>; the dashboard reads that hash into rt_session.
+      (function () {
+        var signInLink = document.getElementById('signInLink');
+        if (signInLink) {
+          var redirect = window.location.origin + '/dashboard';
+          signInLink.href = '/auth/google/start?redirect=' + encodeURIComponent(redirect);
+        }
+
+        var yearEl = document.getElementById('year');
+        if (yearEl) {
+          yearEl.textContent = String(new Date().getFullYear());
+        }
+      })();
+    </script>
+  </body>
+</html>

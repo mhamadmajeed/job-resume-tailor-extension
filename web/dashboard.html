@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dashboard - Resume Tailor</title>
+    <meta name="description" content="View your quota, tailored resume history, and billing for Resume Tailor.">
+    <link rel="stylesheet" href="/site.css">
+    <style>
+      .hidden {
+        display: none !important;
+      }
+
+      /* ---- Nav (signed-in user chip) ---- */
+
+      .nav-user {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .user-pic {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 1px solid var(--line);
+      }
+
+      .user-name {
+        font-size: 14px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .plan-badge {
+        display: inline-flex;
+        align-items: center;
+        font-size: 11px;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        white-space: nowrap;
+      }
+
+      .plan-badge.pro {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      /* ---- Main layout ---- */
+
+      .dash-main {
+        padding: 40px 0 88px;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+      }
+
+      .dash-head h1 {
+        font-size: 26px;
+        font-weight: 800;
+        margin-bottom: 4px;
+      }
+
+      .dash-head p {
+        color: var(--muted);
+        font-size: 14.5px;
+      }
+
+      /* ---- Signed-out card ---- */
+
+      .signed-out {
+        max-width: 420px;
+        margin: 60px auto;
+        padding: 36px 32px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .signed-out h1 {
+        font-size: 20px;
+        font-weight: 750;
+      }
+
+      .signed-out p {
+        color: var(--muted);
+        font-size: 14.5px;
+      }
+
+      /* ---- Quota card ---- */
+
+      .quota-card {
+        padding: 22px 24px;
+      }
+
+      .quota-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .quota-head h2 {
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .quota-text {
+        font-size: 13.5px;
+        color: var(--muted);
+        margin: 10px 0 0;
+      }
+
+      .quota-track {
+        height: 8px;
+        background: var(--line);
+        border-radius: 999px;
+        overflow: hidden;
+        margin: 10px 0 4px;
+      }
+
+      .quota-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--accent), #2b8f7f);
+        border-radius: 999px;
+        transition: width 0.3s ease;
+      }
+
+      .upgrade-row {
+        margin-top: 14px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+      }
+
+      .upgrade-error {
+        font-size: 12.5px;
+        color: #a33b2e;
+        margin: 0;
+      }
+
+      /* ---- Resume list ---- */
+
+      .section-head-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+
+      .section-head-row h2 {
+        font-size: 18px;
+        font-weight: 750;
+        margin: 0;
+      }
+
+      .empty-state {
+        padding: 34px 24px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .empty-state p {
+        color: var(--muted);
+        font-size: 14.5px;
+        max-width: 380px;
+      }
+
+      .empty-state .hint {
+        font-size: 12.5px;
+      }
+
+      .resume-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 16px;
+      }
+
+      .resume-card {
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        cursor: pointer;
+        transition: border-color 0.15s, transform 0.05s;
+      }
+
+      .resume-card:hover {
+        border-color: #c8d4d1;
+      }
+
+      .resume-card:active {
+        transform: translateY(1px);
+      }
+
+      .resume-card:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .resume-card-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .resume-title {
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1.3;
+        margin: 0;
+      }
+
+      .resume-date {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin: 0;
+      }
+
+      /* ---- Resume detail modal ---- */
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(23, 33, 31, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 100;
+      }
+
+      .modal {
+        width: 100%;
+        max-width: 680px;
+        max-height: 86vh;
+        display: flex;
+        flex-direction: column;
+        padding: 24px;
+        gap: 14px;
+        overflow: hidden;
+      }
+
+      .modal-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .modal-head h2 {
+        font-size: 18px;
+        font-weight: 750;
+        margin: 0;
+      }
+
+      .icon-close {
+        width: 30px;
+        height: 30px;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        border: none;
+        background: transparent;
+        font-size: 20px;
+        line-height: 1;
+        color: var(--muted);
+        cursor: pointer;
+        border-radius: 8px;
+      }
+
+      .icon-close:hover {
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      .modal-meta {
+        font-size: 13px;
+        margin: 0;
+      }
+
+      .resume-text {
+        flex: 1;
+        overflow: auto;
+        background: #fbfdfc;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px;
+        font-family: Consolas, "Cascadia Mono", monospace;
+        font-size: 12.5px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+      }
+
+      .modal-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+
+      /* ---- Toast ---- */
+
+      .toast {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: var(--accent-dark);
+        color: #fff;
+        padding: 12px 18px;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        font-size: 13.5px;
+        font-weight: 600;
+        z-index: 200;
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        pointer-events: none;
+        max-width: min(360px, calc(100vw - 48px));
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      @media (max-width: 640px) {
+        .modal {
+          padding: 18px;
+        }
+
+        .resume-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .user-name {
+          display: none;
+        }
+
+        .toast {
+          left: 16px;
+          right: 16px;
+          bottom: 16px;
+          max-width: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container nav">
+        <a class="brand" href="/">
+          <span class="logo" aria-hidden="true">RT</span>
+          <span class="wordmark">Resume Tailor</span>
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a id="navSignInLink" class="btn primary small hidden" href="#">Sign in</a>
+          <div id="navUser" class="nav-user hidden">
+            <img id="userPic" class="user-pic hidden" alt="">
+            <span id="userName" class="user-name"></span>
+            <span id="userPlanBadge" class="plan-badge">Free</span>
+            <button id="signOutButton" type="button" class="btn ghost small">Sign out</button>
+          </div>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container dash-main">
+      <section id="signedOutCard" class="card signed-out hidden">
+        <h1>Sign in to see your resumes</h1>
+        <p>Connect your Google account to view your quota, tailored resume history, and billing.</p>
+        <button id="signInButton" type="button" class="btn primary large">Sign in with Google</button>
+      </section>
+
+      <div id="signedInWrap" class="hidden">
+        <div class="dash-head">
+          <h1>Your dashboard</h1>
+          <p>Everything the extension has tailored for you, in one place.</p>
+        </div>
+
+        <section id="quotaCard" class="card quota-card">
+          <div class="quota-head">
+            <h2>Usage this month</h2>
+            <span id="planBadge" class="plan-badge">Free</span>
+          </div>
+          <p id="quotaText" class="quota-text">Loading your usage...</p>
+          <div class="quota-track"><div id="quotaFill" class="quota-fill"></div></div>
+          <div id="upgradeRow" class="upgrade-row hidden">
+            <button id="upgradeButton" type="button" class="btn primary">Upgrade to Pro - $29/mo</button>
+            <p id="upgradeError" class="upgrade-error hidden"></p>
+          </div>
+        </section>
+
+        <section class="dash-resumes">
+          <div class="section-head-row">
+            <h2>Your tailored resumes</h2>
+          </div>
+          <div id="resumeEmpty" class="card empty-state hidden">
+            <p>No tailored resumes yet - install the extension and generate your first one.</p>
+            <a class="btn primary" href="https://github.com/mhamadmajeed/job-resume-tailor-extension" target="_blank" rel="noopener noreferrer">Get the extension</a>
+            <p class="hint muted">Chrome Web Store listing coming soon.</p>
+          </div>
+          <div id="resumeGrid" class="resume-grid"></div>
+        </section>
+      </div>
+    </main>
+
+    <div id="resumeModal" class="modal-overlay hidden">
+      <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-head">
+          <h2 id="modalTitle">Tailored resume</h2>
+          <button id="modalClose" type="button" class="icon-close" aria-label="Close">&times;</button>
+        </div>
+        <p id="modalMeta" class="modal-meta muted"></p>
+        <pre id="modalText" class="resume-text"></pre>
+        <div class="modal-actions">
+          <button id="copyTextBtn" type="button" class="btn ghost">Copy text</button>
+          <button id="downloadTxtBtn" type="button" class="btn ghost">Download .txt</button>
+          <button id="downloadPdfBtn" type="button" class="btn primary">Download PDF</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <script src="/dashboard.js"></script>
+  </body>
+</html>

@@ -10,6 +10,7 @@ const downloadPdf = document.querySelector('#downloadPdf');
 const downloadDocx = document.querySelector('#downloadDocx');
 const accountState = document.querySelector('#accountState');
 const quotaState = document.querySelector('#quotaState');
+const syncButton = document.querySelector('#syncButton');
 const upsellPanel = document.querySelector('#upsellPanel');
 const upgradeButton = document.querySelector('#upgradeButton');
 const matchPanel = document.querySelector('#matchPanel');
@@ -82,6 +83,7 @@ function buildOutputFilename(jobTitle) {
 }
 let currentDeviceId = '';
 let currentQuota = null;
+let currentAccount = null;
 let serverHasResume = false;
 let currentMatch = { before: null, after: null };
 let pollTimer = null;
@@ -231,6 +233,15 @@ async function restoreServerState() {
   serverHasResume = Boolean(state.resume);
   renderQuota();
 
+  if (state.account) {
+    currentAccount = state.account;
+    syncButton.classList.add('hidden');
+    accountState.textContent = `${currentQuota?.isPro ? 'Pro plan' : 'Free plan'} - ${state.account.email}`;
+  } else {
+    currentAccount = null;
+    syncButton.classList.remove('hidden');
+  }
+
   if (state.resume) {
     storedResumeFilename = state.resume.filename || '';
     if (!currentOriginalResume) {
@@ -265,6 +276,41 @@ function stopPolling() {
     pollTimer = null;
   }
 }
+
+// Device-code style handshake: open the Google Sign-In tab, then poll link/status
+// every 2s until the device is linked (or the 10-minute link expires).
+syncButton.addEventListener('click', async () => {
+  syncButton.disabled = true;
+  try {
+    const r = await apiFetch('/api/link/start', { method: 'POST', body: JSON.stringify({}) });
+    await chrome.tabs.create({ url: r.linkUrl });
+
+    stopPolling();
+    let attempts = 0;
+    const maxAttempts = Math.ceil((10 * 60 * 1000) / 2000);
+    pollTimer = setInterval(async () => {
+      attempts += 1;
+      try {
+        const s = await apiFetch('/api/link/status?token=' + r.token);
+        if (s.status === 'consumed') {
+          stopPolling();
+          await restoreServerState();
+          syncButton.disabled = false;
+          return;
+        }
+      } catch (_pollError) {
+        // Transient errors are fine here; keep polling until the attempt cap.
+      }
+      if (attempts >= maxAttempts) {
+        stopPolling();
+        syncButton.disabled = false;
+      }
+    }, 2000);
+  } catch (error) {
+    quotaState.textContent = error.message || 'Could not start sync.';
+    syncButton.disabled = false;
+  }
+});
 
 upgradeButton.addEventListener('click', async () => {
   upgradeButton.disabled = true;
