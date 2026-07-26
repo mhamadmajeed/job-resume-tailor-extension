@@ -27,6 +27,8 @@ const matchCheckScore = document.querySelector('#matchCheckScore');
 const matchCheckVerdict = document.querySelector('#matchCheckVerdict');
 const matchedChips = document.querySelector('#matchedChips');
 const missingChips = document.querySelector('#missingChips');
+const maxIntensityOption = document.querySelector('#maxIntensityOption');
+const ultraIntensityOption = document.querySelector('#ultraIntensityOption');
 
 let progressTimer = null;
 
@@ -87,6 +89,8 @@ let currentAccount = null;
 let serverHasResume = false;
 let currentMatch = { before: null, after: null };
 let pollTimer = null;
+let isBusyState = false;
+let boostLockedByPlan = false;
 
 function hasResume() {
   return Boolean(currentResumeText || serverHasResume);
@@ -141,9 +145,10 @@ function clearError(element) {
 }
 
 function setBusy(isBusy) {
+  isBusyState = isBusy;
   analyzeJob.disabled = isBusy || !hasResume();
   checkMatch.disabled = isBusy || !hasResume();
-  boostMatch.disabled = isBusy || !currentGeneratedResume;
+  boostMatch.disabled = isBusy || !currentGeneratedResume || boostLockedByPlan;
   clearResume.disabled = isBusy;
   downloadOriginal.disabled = isBusy || !currentOriginalResume;
   downloadPdf.disabled = isBusy || !resumeDraft.value.trim();
@@ -213,6 +218,40 @@ function renderQuota() {
 
   // Only pitch the upgrade after they've seen a result, never upfront.
   if (isPro) upsellPanel.classList.add('hidden');
+
+  applyPlanGating();
+}
+
+// Server already enforces every gate below on /api/generate and /api/boost -
+// this is UX only, so the picker doesn't let people pick something they'll
+// just get a 403 for. A missing `features` object (old cached /api/me or
+// /api/state response) is treated as fully unlocked so nothing breaks.
+function applyPlanGating() {
+  const features = currentQuota?.features || { maxIntensity: true, ultraIntensity: true, boost: true };
+
+  setIntensityLock(maxIntensityOption, features.maxIntensity === false, 'The Max level needs the Pro plan ($19/mo).');
+  setIntensityLock(ultraIntensityOption, features.ultraIntensity === false, 'The Ultra level needs the Elite plan ($29/mo).');
+
+  // If the currently selected intensity just became locked, fall back to Medium.
+  const checkedInput = document.querySelector('input[name="intensity"]:checked');
+  if (checkedInput?.closest('.intensity-option')?.classList.contains('locked')) {
+    const balancedInput = document.querySelector('input[name="intensity"][value="balanced"]');
+    if (balancedInput) balancedInput.checked = true;
+  }
+
+  boostLockedByPlan = features.boost === false;
+  boostMatch.title = boostLockedByPlan ? 'Boost needs the Pro plan ($19/mo).' : '';
+  boostMatch.disabled = isBusyState || !currentGeneratedResume || boostLockedByPlan;
+}
+
+function setIntensityLock(optionEl, locked, tooltip) {
+  if (!optionEl) return;
+  const input = optionEl.querySelector('input');
+  const badge = optionEl.querySelector('.lock-badge');
+  optionEl.classList.toggle('locked', locked);
+  if (input) input.disabled = locked;
+  if (badge) badge.classList.toggle('hidden', !locked);
+  optionEl.title = locked ? tooltip : '';
 }
 
 function maybeShowUpsell() {

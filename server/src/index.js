@@ -9,6 +9,8 @@ import { tailorResume, reviseResume, boostResume, scoreMatch } from './claude.js
 import { createCheckoutSession, verifyStripeWebhook } from './stripe.js';
 import { exchangeCodeForTokens, verifyGoogleIdToken } from './google.js';
 import { errorPage, deviceConnectedPage } from './pages.js';
+import { adminRouter, bindAdminOnSignIn } from './admin.js';
+import { blogRouter } from './blog.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // web/ lives inside server/ because the Railway service builds from the server/
@@ -44,21 +46,23 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
     // for - an anonymous device id, or an account id for signed-in web/dashboard users.
     const ownerId = object.metadata?.device_id;
     const email = object.customer_details?.email || object.customer_email || null;
+    const plan = object.metadata?.plan === 'elite' ? 'elite' : 'pro';
     if (ownerId) {
       db.prepare(
         `INSERT INTO users (id, email, plan, generations_used, period_start, stripe_customer_id, stripe_subscription_id, created_at)
-         VALUES (?, ?, 'pro', 0, ?, ?, ?, ?)
+         VALUES (?, ?, ?, 0, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
-           plan = 'pro',
+           plan = excluded.plan,
            email = COALESCE(excluded.email, users.email),
            stripe_customer_id = excluded.stripe_customer_id,
            stripe_subscription_id = excluded.stripe_subscription_id`
-      ).run(ownerId, email, nowIso(), object.customer, object.subscription, nowIso());
+      ).run(ownerId, email, plan, nowIso(), object.customer, object.subscription, nowIso());
     }
   }
 
   if (event.type === 'customer.subscription.updated') {
-    const plan = ['active', 'trialing'].includes(object.status) ? 'pro' : 'free';
+    const activePlan = object.metadata?.plan === 'elite' ? 'elite' : 'pro';
+    const plan = ['active', 'trialing'].includes(object.status) ? activePlan : 'free';
     db.prepare('UPDATE users SET plan = ? WHERE stripe_subscription_id = ?').run(plan, object.id);
   }
 
@@ -74,8 +78,31 @@ app.use(express.urlencoded({ extended: true }));
 
 const PERIOD_DAYS = 30;
 
+// Three tiers stored in users.plan: free / pro / elite. See PLAN SPEC.
+const PLAN_ENV_KEYS = { free: 'FREE_GENERATION_LIMIT', pro: 'PRO_GENERATION_LIMIT', elite: 'ELITE_GENERATION_LIMIT' };
+const PLAN_DEFAULTS = { free: 5, pro: 100, elite: 300 };
+
 function planLimit(plan) {
-  return plan === 'pro' ? Number(process.env.PRO_GENERATION_LIMIT || 100) : Number(process.env.FREE_GENERATION_LIMIT || 5);
+  const envKey = PLAN_ENV_KEYS[plan] || PLAN_ENV_KEYS.free;
+  const fallback = PLAN_DEFAULTS[plan] || PLAN_DEFAULTS.free;
+  return Number(process.env[envKey] || fallback);
+}
+
+// intensity gates: 'max' requires pro+, 'ultra' requires elite. Returns a clear
+// upgrade message, or null if the plan is allowed to use this intensity.
+function intensityGateError(plan, intensity) {
+  if (intensity === 'max' && plan === 'free') {
+    return 'The Max level needs the Pro plan ($19/mo).';
+  }
+  if (intensity === 'ultra' && plan !== 'elite') {
+    return 'The Ultra level needs the Elite plan ($29/mo).';
+  }
+  return null;
+}
+
+function boostGateError(plan) {
+  if (plan === 'free') return 'Boost needs the Pro plan ($19/mo).';
+  return null;
 }
 
 // Rolls the 30-day usage window for every plan, resetting the counter when a new
@@ -93,10 +120,16 @@ function userSummary(user) {
   const limit = planLimit(user.plan);
   return {
     plan: user.plan,
-    isPro: user.plan === 'pro',
+    tier: user.plan,
+    isPro: user.plan !== 'free',
     generationsUsed: user.generations_used,
     limit,
-    remaining: Math.max(0, limit - user.generations_used)
+    remaining: Math.max(0, limit - user.generations_used),
+    features: {
+      maxIntensity: user.plan !== 'free',
+      ultraIntensity: user.plan === 'elite',
+      boost: user.plan !== 'free'
+    }
   };
 }
 
@@ -104,7 +137,7 @@ function getOrCreateUser(deviceId) {
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(deviceId);
   if (existing) return refreshQuotaPeriod(existing);
 
-  const user = { id: deviceId, plan: 'free', generations_used: 0, period_start: nowIso(), created_at: nowIso() };
+  const user = { id: deviceId, plan: 'free', generations_used: 0, period_start: nowIso(), created_at: nowIso(), status: 'active' };
   db.prepare(
     'INSERT INTO users (id, plan, generations_used, period_start, created_at) VALUES (?, ?, ?, ?, ?)'
   ).run(user.id, user.plan, user.generations_used, user.period_start, user.created_at);
@@ -112,9 +145,14 @@ function getOrCreateUser(deviceId) {
 }
 
 function quotaExceededError(user) {
-  return user.plan === 'pro'
-    ? 'You have used all 100 generations for this billing period.'
-    : 'Free plan limit reached (5 tailored resumes this month). Upgrade to Pro for 100 a month.';
+  const limit = planLimit(user.plan);
+  if (user.plan === 'elite') {
+    return `You have used all ${limit} generations for this billing period.`;
+  }
+  if (user.plan === 'pro') {
+    return `You have used all ${limit} generations for this billing period. Upgrade to Elite for 300 a month.`;
+  }
+  return `Free plan limit reached (${limit} tailored resumes every 30 days). Upgrade to Pro for 100 a month.`;
 }
 
 // Check-match and generate must agree on the "before" score, so check results are
@@ -242,6 +280,7 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
   });
   const profile = await verifyGoogleIdToken(tokens.id_token, process.env.GOOGLE_CLIENT_ID);
   const account = getOrCreateAccount(profile);
+  bindAdminOnSignIn(account, process.env.OWNER_EMAIL);
 
   if (stateRow.link_token) {
     linkDeviceToAccount(stateRow.link_token, account);
@@ -315,6 +354,9 @@ authed.post('/resume', (req, res) => {
 authed.post('/generate', asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
+  if (user.status === 'paused') {
+    return res.status(403).json({ error: 'Your account is paused. Contact support.' });
+  }
   if (user.generations_used >= planLimit(user.plan)) {
     return res.status(402).json({ error: quotaExceededError(user), quota: userSummary(user) });
   }
@@ -326,6 +368,8 @@ authed.post('/generate', asyncRoute(async (req, res) => {
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
 
   const intensity = ['minimal', 'balanced', 'max', 'ultra'].includes(req.body.intensity) ? req.body.intensity : 'balanced';
+  const intensityGate = intensityGateError(user.plan, intensity);
+  if (intensityGate) return res.status(403).json({ error: intensityGate, upgrade: true });
 
   // Single source of truth for the before-score: reuse the cached Check-match result
   // for this exact job, or run the same score-only pass now. The tailoring call is
@@ -362,7 +406,10 @@ authed.post('/generate', asyncRoute(async (req, res) => {
 // Score-only check: one Claude call, no rewriting, nothing stored, no quota used.
 authed.post('/match', asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
-  getOrCreateUser(ownerId);
+  const user = getOrCreateUser(ownerId);
+  if (user.status === 'paused') {
+    return res.status(403).json({ error: 'Your account is paused. Contact support.' });
+  }
 
   const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(ownerId);
   if (!resumeRow) return res.status(400).json({ error: 'Upload a resume first.' });
@@ -383,7 +430,10 @@ authed.post('/match', asyncRoute(async (req, res) => {
 
 authed.post('/revise', asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
-  getOrCreateUser(ownerId);
+  const user = getOrCreateUser(ownerId);
+  if (user.status === 'paused') {
+    return res.status(403).json({ error: 'Your account is paused. Contact support.' });
+  }
   const generationId = String(req.body.generationId || '');
   const instruction = String(req.body.instruction || '').trim();
   if (!instruction) return res.status(400).json({ error: 'instruction is required.' });
@@ -411,6 +461,11 @@ authed.post('/revise', asyncRoute(async (req, res) => {
 authed.post('/boost', asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
+  if (user.status === 'paused') {
+    return res.status(403).json({ error: 'Your account is paused. Contact support.' });
+  }
+  const boostGate = boostGateError(user.plan);
+  if (boostGate) return res.status(403).json({ error: boostGate, upgrade: true });
   if (user.generations_used >= planLimit(user.plan)) {
     return res.status(402).json({ error: quotaExceededError(user), quota: userSummary(user) });
   }
@@ -444,12 +499,13 @@ authed.post('/boost', asyncRoute(async (req, res) => {
 authed.post('/checkout', asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
+  const plan = req.body?.plan === 'elite' ? 'elite' : 'pro';
 
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_BASE_URL}/billing/success`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_BASE_URL}/billing/cancel`;
 
   try {
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan);
     res.json({ url: session.url });
   } catch (checkoutError) {
     res.status(500).json({ error: checkoutError.message });
@@ -523,21 +579,54 @@ account.get('/resumes/:id', (req, res) => {
 
 account.post('/checkout', asyncRoute(async (req, res) => {
   const user = getOrCreateUser(req.accountId);
+  const plan = req.body?.plan === 'elite' ? 'elite' : 'pro';
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_WEB_URL}/dashboard?upgraded=1`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_WEB_URL}/dashboard`;
 
   try {
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan);
     res.json({ url: session.url });
   } catch (checkoutError) {
     res.status(500).json({ error: checkoutError.message });
   }
 }));
 
+// Newest 50 in-app notifications for the signed-in account, and marking one read.
+account.get('/notifications', (req, res) => {
+  const rows = db.prepare(
+    'SELECT id, title, body, created_at, read_at FROM notifications WHERE account_id = ? ORDER BY created_at DESC LIMIT 50'
+  ).all(req.accountId);
+  res.json(rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    createdAt: row.created_at,
+    readAt: row.read_at
+  })));
+});
+
+account.post('/notifications/:id/read', (req, res) => {
+  const row = db.prepare('SELECT id FROM notifications WHERE id = ? AND account_id = ?').get(req.params.id, req.accountId);
+  if (!row) return res.status(404).json({ error: 'Notification not found.' });
+  db.prepare('UPDATE notifications SET read_at = ? WHERE id = ?').run(nowIso(), req.params.id);
+  res.json({ ok: true });
+});
+
 app.use('/account', account);
 
 app.get('/billing/success', (req, res) => res.send('<h1>Payment successful</h1><p>Go back to the extension - your plan will update within a few seconds.</p>'));
 app.get('/billing/cancel', (req, res) => res.send('<h1>Checkout canceled</h1><p>No charge was made. You can close this tab.</p>'));
+
+// ---- Admin (JSON API + the admin page shell; auth is enforced client-side by /admin/me) ----
+// The HTML route must be registered BEFORE the router, or the router's auth middleware
+// intercepts GET /admin itself and 401s the page.
+
+app.get('/admin', (req, res) => res.sendFile(path.join(WEB_DIR, 'admin.html')));
+app.use('/admin', adminRouter);
+
+// ---- Public blog ----
+
+app.use('/blog', blogRouter);
 
 // ---- Website (static files) ----
 

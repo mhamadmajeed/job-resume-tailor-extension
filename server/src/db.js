@@ -35,7 +35,8 @@ db.exec(schema);
 for (const statement of [
   'ALTER TABLE generations ADD COLUMN job_text TEXT',
   'ALTER TABLE generations ADD COLUMN match_before INTEGER',
-  'ALTER TABLE generations ADD COLUMN match_after INTEGER'
+  'ALTER TABLE generations ADD COLUMN match_after INTEGER',
+  "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
 ]) {
   try {
     db.exec(statement);

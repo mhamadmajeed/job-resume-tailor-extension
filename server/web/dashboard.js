@@ -11,6 +11,12 @@ const userName = document.querySelector('#userName');
 const userPlanBadge = document.querySelector('#userPlanBadge');
 const signOutButton = document.querySelector('#signOutButton');
 
+const notifBell = document.querySelector('#notifBell');
+const notifBellButton = document.querySelector('#notifBellButton');
+const notifBadge = document.querySelector('#notifBadge');
+const notifPanel = document.querySelector('#notifPanel');
+const notifList = document.querySelector('#notifList');
+
 const signedOutCard = document.querySelector('#signedOutCard');
 const signInButton = document.querySelector('#signInButton');
 const signedInWrap = document.querySelector('#signedInWrap');
@@ -19,7 +25,8 @@ const quotaText = document.querySelector('#quotaText');
 const quotaFill = document.querySelector('#quotaFill');
 const planBadge = document.querySelector('#planBadge');
 const upgradeRow = document.querySelector('#upgradeRow');
-const upgradeButton = document.querySelector('#upgradeButton');
+const upgradeProButton = document.querySelector('#upgradeProButton');
+const upgradeEliteButton = document.querySelector('#upgradeEliteButton');
 const upgradeError = document.querySelector('#upgradeError');
 
 const resumeGrid = document.querySelector('#resumeGrid');
@@ -123,6 +130,9 @@ function showSignedOut() {
   navUser.classList.add('hidden');
   navSignInLink.classList.remove('hidden');
   hideModal();
+  closeNotifPanel();
+  notifications = [];
+  renderNotifications();
 }
 
 function showSignedIn() {
@@ -187,16 +197,32 @@ async function loadAccount() {
   }
 }
 
+// Free/Pro/Elite - falls back to the older isPro boolean for any cached
+// response that predates the `plan` field.
+function planOf(account) {
+  return account.plan || (account.isPro ? 'pro' : 'free');
+}
+
+function planLabelFor(plan) {
+  if (plan === 'elite') return 'Elite';
+  if (plan === 'pro') return 'Pro';
+  return 'Free';
+}
+
+function setPlanBadge(el, plan) {
+  el.textContent = planLabelFor(plan);
+  el.classList.toggle('pro', plan === 'pro');
+  el.classList.toggle('elite', plan === 'elite');
+}
+
 function renderAccount(account) {
   userPic.src = account.pictureUrl || '';
   userPic.classList.toggle('hidden', !account.pictureUrl);
   userName.textContent = account.name || account.email || 'Signed in';
 
-  const planLabel = account.isPro ? 'Pro' : 'Free';
-  userPlanBadge.textContent = planLabel;
-  userPlanBadge.classList.toggle('pro', Boolean(account.isPro));
-  planBadge.textContent = planLabel;
-  planBadge.classList.toggle('pro', Boolean(account.isPro));
+  const plan = planOf(account);
+  setPlanBadge(userPlanBadge, plan);
+  setPlanBadge(planBadge, plan);
 
   if (account.limit != null) {
     quotaText.textContent = `${account.remaining} of ${account.limit} tailored resumes left this month`;
@@ -208,14 +234,17 @@ function renderAccount(account) {
     quotaFill.style.width = '100%';
   }
 
-  upgradeRow.classList.toggle('hidden', Boolean(account.isPro));
+  // free: both upgrade buttons. pro: Elite only. elite: neither, row hidden.
+  upgradeProButton.classList.toggle('hidden', plan !== 'free');
+  upgradeEliteButton.classList.toggle('hidden', plan === 'elite');
+  upgradeRow.classList.toggle('hidden', plan === 'elite');
 }
 
-upgradeButton.addEventListener('click', async () => {
-  upgradeButton.disabled = true;
+async function startCheckout(plan, button) {
+  button.disabled = true;
   upgradeError.classList.add('hidden');
   try {
-    const data = await apiFetch('/account/checkout', { method: 'POST', body: JSON.stringify({}) });
+    const data = await apiFetch('/account/checkout', { method: 'POST', body: JSON.stringify({ plan }) });
     if (data?.url) {
       window.location = data.url;
       return;
@@ -225,8 +254,101 @@ upgradeButton.addEventListener('click', async () => {
     upgradeError.textContent = err.message || 'Billing is not configured yet. Please try again later.';
     upgradeError.classList.remove('hidden');
   } finally {
-    upgradeButton.disabled = false;
+    button.disabled = false;
   }
+}
+
+upgradeProButton.addEventListener('click', () => startCheckout('pro', upgradeProButton));
+upgradeEliteButton.addEventListener('click', () => startCheckout('elite', upgradeEliteButton));
+
+// ---- Notifications ----
+
+let notifications = [];
+
+function notifIsUnread(notif) {
+  return notif.readAt == null && notif.read_at == null;
+}
+
+function notifCreatedAt(notif) {
+  return notif.createdAt || notif.created_at || '';
+}
+
+async function loadNotifications() {
+  try {
+    const rows = await apiFetch('/account/notifications');
+    notifications = Array.isArray(rows) ? rows : [];
+    renderNotifications();
+  } catch (_err) {
+    // Notifications are a non-critical enhancement - fail silently.
+  }
+}
+
+function renderNotifications() {
+  const unreadCount = notifications.filter(notifIsUnread).length;
+  notifBadge.classList.toggle('hidden', unreadCount === 0);
+  notifBadge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+
+  notifList.innerHTML = '';
+
+  if (!notifications.length) {
+    const empty = document.createElement('p');
+    empty.className = 'notif-empty';
+    empty.textContent = 'No notifications';
+    notifList.appendChild(empty);
+    return;
+  }
+
+  notifications
+    .slice()
+    .sort((a, b) => new Date(notifCreatedAt(b)).getTime() - new Date(notifCreatedAt(a)).getTime())
+    .forEach((notif) => notifList.appendChild(renderNotifItem(notif)));
+}
+
+function renderNotifItem(notif) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = `notif-item${notifIsUnread(notif) ? ' unread' : ''}`;
+  item.setAttribute('role', 'menuitem');
+  item.innerHTML = `
+    <p class="notif-item-title">${escapeHtml(notif.title || 'Notification')}</p>
+    ${notif.body ? `<p class="notif-item-body">${escapeHtml(notif.body)}</p>` : ''}
+    <p class="notif-item-date">${escapeHtml(formatDate(notifCreatedAt(notif)))}</p>
+  `;
+  item.addEventListener('click', () => markNotificationRead(notif));
+  return item;
+}
+
+async function markNotificationRead(notif) {
+  if (!notifIsUnread(notif)) return;
+  const readNow = new Date().toISOString();
+  notif.readAt = readNow;
+  notif.read_at = readNow;
+  renderNotifications();
+  try {
+    await apiFetch(`/account/notifications/${encodeURIComponent(notif.id)}/read`, { method: 'POST', body: JSON.stringify({}) });
+  } catch (_err) {
+    // Best effort - local state already reflects "read"; next load resyncs.
+  }
+}
+
+function closeNotifPanel() {
+  notifPanel.classList.add('hidden');
+  notifBellButton.setAttribute('aria-expanded', 'false');
+}
+
+notifBellButton.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const opening = notifPanel.classList.contains('hidden');
+  notifPanel.classList.toggle('hidden', !opening);
+  notifBellButton.setAttribute('aria-expanded', String(opening));
+});
+
+document.addEventListener('click', (event) => {
+  if (!notifBell.contains(event.target)) closeNotifPanel();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeNotifPanel();
 });
 
 // ---- Resume list ----
@@ -559,7 +681,7 @@ function maybeShowUpgradeToast() {
   const params = new URLSearchParams(location.search);
   if (params.get('upgraded') !== '1') return;
 
-  showToast('Welcome to Pro!');
+  showToast('Your plan has been upgraded!');
   params.delete('upgraded');
   const query = params.toString();
   history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}`);
@@ -574,6 +696,7 @@ if (getToken()) {
   showSignedIn();
   loadAccount();
   loadResumes();
+  loadNotifications();
 } else {
   showSignedOut();
 }

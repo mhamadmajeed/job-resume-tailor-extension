@@ -49,13 +49,13 @@
             <input type="radio" name="intensity" value="balanced" checked>
             <span class="intensity-card"><strong>Medium</strong><small>Balanced</small></span>
           </label>
-          <label class="intensity-option">
+          <label id="maxIntensityOption" class="intensity-option">
             <input type="radio" name="intensity" value="max">
-            <span class="intensity-card"><strong>Max</strong><small>Deep rewrite</small></span>
+            <span class="intensity-card"><strong>Max</strong><small>Deep rewrite</small><span class="lock-badge hidden">Pro</span></span>
           </label>
-          <label class="intensity-option">
+          <label id="ultraIntensityOption" class="intensity-option">
             <input type="radio" name="intensity" value="ultra">
-            <span class="intensity-card"><strong>Ultra</strong><small>All-out</small></span>
+            <span class="intensity-card"><strong>Ultra</strong><small>All-out</small><span class="lock-badge hidden">Elite</span></span>
           </label>
         </div>
         <div class="actions">
@@ -95,7 +95,7 @@
 
         <div id="upsellPanel" class="upsell hidden">
           <p id="upsellText">Free plan: limited tailored resumes per month.</p>
-          <button id="upgradeButton" type="button" class="primary">Upgrade to Pro - 100/month ($29)</button>
+          <button id="upgradeButton" type="button" class="primary">Upgrade to Pro - 100/month ($19/mo)</button>
         </div>
 
         <div class="chat-panel">

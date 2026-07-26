@@ -87,3 +87,42 @@ CREATE TABLE IF NOT EXISTS oauth_states (
 
 CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id);
 CREATE INDEX IF NOT EXISTS idx_revisions_generation ON revisions(generation_id);
+
+-- Admin panel: roles for people managing the product (owner/moderator/writer).
+-- account_id starts NULL when an admin is invited by email before they've ever
+-- signed in; it gets bound to the matching account on their first Google sign-in.
+CREATE TABLE IF NOT EXISTS admins (
+  id TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL COLLATE NOCASE,
+  account_id TEXT NULL,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- In-app notifications sent to an account by an admin, individually or via broadcast.
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  title TEXT,
+  body TEXT,
+  created_at TEXT NOT NULL,
+  read_at TEXT NULL
+);
+
+-- Public blog, written and published from the admin panel.
+CREATE TABLE IF NOT EXISTS blog_posts (
+  id TEXT PRIMARY KEY,
+  slug TEXT UNIQUE,
+  title TEXT,
+  excerpt TEXT,
+  content TEXT,
+  status TEXT DEFAULT 'draft',
+  author_admin_id TEXT,
+  created_at TEXT,
+  updated_at TEXT,
+  published_at TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_admins_account ON admins(account_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_account ON notifications(account_id);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_status ON blog_posts(status);

@@ -307,6 +307,41 @@ button.small {
   color: var(--accent);
 }
 
+/* ---- Locked intensities (plan gating - UX only, server enforces the rest) ---- */
+
+.intensity-card {
+  position: relative;
+}
+
+.lock-badge {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  background: var(--accent-dark);
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 5px;
+  border-radius: 999px;
+  line-height: 1.3;
+}
+
+.intensity-option.locked input:checked + .intensity-card {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.intensity-option.locked .intensity-card {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.intensity-option.locked .intensity-card:hover {
+  border-color: var(--line);
+}
+
 /* ---- Progress bar ---- */
 
 .progress {

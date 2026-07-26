@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin - Resume Tailor</title>
+    <meta name="description" content="Resume Tailor admin panel: manage members, broadcasts, the blog, and admin access.">
+    <link rel="stylesheet" href="/site.css">
+    <style>
+      .hidden {
+        display: none !important;
+      }
+
+      /* ---- Nav (signed-in admin chip) ---- */
+
+      .nav-user {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .user-pic {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 1px solid var(--line);
+      }
+
+      .user-name {
+        font-size: 14px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .role-badge {
+        display: inline-flex;
+        align-items: center;
+        font-size: 11px;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        white-space: nowrap;
+      }
+
+      /* ---- Main layout ---- */
+
+      .admin-main {
+        padding: 32px 0 88px;
+      }
+
+      .admin-head {
+        margin-bottom: 18px;
+      }
+
+      .admin-head h1 {
+        font-size: 24px;
+        font-weight: 800;
+        margin-bottom: 4px;
+      }
+
+      /* ---- Signed-out / denied card ---- */
+
+      .signed-out {
+        max-width: 420px;
+        margin: 60px auto;
+        padding: 36px 32px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .signed-out h1 {
+        font-size: 20px;
+        font-weight: 750;
+      }
+
+      .signed-out p {
+        color: var(--muted);
+        font-size: 14.5px;
+      }
+
+      /* ---- Tab bar ---- */
+
+      .tab-bar {
+        position: sticky;
+        top: 0;
+        z-index: 15;
+        display: flex;
+        gap: 4px;
+        background: rgba(244, 247, 246, 0.94);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line);
+        margin: 0 0 22px;
+        padding: 6px 0;
+        overflow-x: auto;
+      }
+
+      .tab-btn {
+        flex-shrink: 0;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-weight: 650;
+        font-size: 14px;
+        padding: 10px 16px;
+        border-radius: 8px 8px 0 0;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+      }
+
+      .tab-btn:hover {
+        color: var(--ink);
+      }
+
+      .tab-btn.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+
+      .tab-panel {
+        display: none;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .tab-panel.active {
+        display: flex;
+      }
+
+      /* ---- Toolbars / forms ---- */
+
+      .panel-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .input {
+        font: inherit;
+        font-size: 14px;
+        color: var(--ink);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px 12px;
+        width: 100%;
+      }
+
+      .input:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+
+      #memberSearch {
+        max-width: 320px;
+      }
+
+      .form-card {
+        padding: 22px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .form-card h2 {
+        font-size: 16px;
+        font-weight: 750;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 13.5px;
+        font-weight: 650;
+      }
+
+      textarea.input {
+        resize: vertical;
+        font-family: inherit;
+      }
+
+      .hint {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .inline-fields {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .inline-fields .input {
+        width: auto;
+        flex: 1 1 200px;
+      }
+
+      .result-text {
+        font-size: 13.5px;
+        color: var(--ink);
+        background: var(--accent-soft);
+        border: 1px solid #c3ddd9;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 0;
+      }
+
+      .result-text.error {
+        background: #fdece9;
+        border-color: #f0c3ba;
+        color: #a33b2e;
+      }
+
+      /* ---- Tables ---- */
+
+      .table-wrap {
+        overflow-x: auto;
+        padding: 4px;
+      }
+
+      .admin-table {
+        width: 100%;
+        min-width: 760px;
+        border-collapse: collapse;
+        font-size: 13.5px;
+      }
+
+      .admin-table th {
+        text-align: left;
+        font-size: 11.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+        font-weight: 700;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+
+      .admin-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: middle;
+      }
+
+      .admin-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      .cell-muted {
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .cell-actions {
+        display: flex;
+        gap: 6px;
+        white-space: nowrap;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 650;
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+      }
+
+      .status-pill.active {
+        background: var(--accent-soft);
+        border-color: #c3ddd9;
+        color: var(--accent);
+      }
+
+      .status-pill.paused {
+        background: var(--warn-bg);
+        border-color: var(--warn-line);
+        color: var(--warn-ink);
+      }
+
+      .status-pill.draft {
+        background: var(--warn-bg);
+        border-color: var(--warn-line);
+        color: var(--warn-ink);
+      }
+
+      .status-pill.published {
+        background: var(--accent-soft);
+        border-color: #c3ddd9;
+        color: var(--accent);
+      }
+
+      .plan-select {
+        font: inherit;
+        font-size: 13px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 5px 8px;
+        background: var(--card);
+        color: var(--ink);
+      }
+
+      .empty-note {
+        padding: 24px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      /* ---- Modals ---- */
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(23, 33, 31, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 100;
+      }
+
+      .modal {
+        width: 100%;
+        max-width: 480px;
+        display: flex;
+        flex-direction: column;
+        padding: 24px;
+        gap: 14px;
+      }
+
+      .modal-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .modal-head h2 {
+        font-size: 17px;
+        font-weight: 750;
+        margin: 0;
+      }
+
+      .icon-close {
+        width: 30px;
+        height: 30px;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        border: none;
+        background: transparent;
+        font-size: 20px;
+        line-height: 1;
+        color: var(--muted);
+        cursor: pointer;
+        border-radius: 8px;
+      }
+
+      .icon-close:hover {
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      .modal-sub {
+        font-size: 13px;
+        color: var(--muted);
+        margin: -8px 0 0;
+      }
+
+      .modal-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+
+      .danger-text {
+        color: #a33b2e;
+        font-size: 13.5px;
+        margin: 0;
+      }
+
+      /* ---- Toast ---- */
+
+      .toast {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: var(--accent-dark);
+        color: #fff;
+        padding: 12px 18px;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        font-size: 13.5px;
+        font-weight: 600;
+        z-index: 200;
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        pointer-events: none;
+        max-width: min(360px, calc(100vw - 48px));
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      @media (max-width: 640px) {
+        .modal {
+          padding: 18px;
+        }
+
+        .user-name {
+          display: none;
+        }
+
+        .panel-toolbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        #memberSearch {
+          max-width: none;
+        }
+
+        .toast {
+          left: 16px;
+          right: 16px;
+          bottom: 16px;
+          max-width: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container nav">
+        <a class="brand" href="/">
+          <span class="logo" aria-hidden="true">RT</span>
+          <span class="wordmark">Resume Tailor</span>
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a class="btn ghost small" href="/dashboard">Dashboard</a>
+          <a id="navSignInLink" class="btn primary small hidden" href="#">Sign in</a>
+          <div id="navUser" class="nav-user hidden">
+            <img id="userPic" class="user-pic hidden" alt="">
+            <span id="userName" class="user-name"></span>
+            <span id="userRoleBadge" class="role-badge hidden"></span>
+            <button id="signOutButton" type="button" class="btn ghost small">Sign out</button>
+          </div>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container admin-main">
+      <section id="signedOutCard" class="card signed-out hidden">
+        <h1>Sign in to open the admin panel</h1>
+        <p>Connect your Google account to manage members, broadcasts, the blog, and admin access.</p>
+        <button id="signInButton" type="button" class="btn primary large">Sign in with Google</button>
+      </section>
+
+      <section id="deniedCard" class="card signed-out hidden">
+        <h1>Access denied</h1>
+        <p id="deniedText">This account does not have admin access.</p>
+        <a class="btn ghost" href="/dashboard">Go to your dashboard</a>
+      </section>
+
+      <div id="adminWrap" class="hidden">
+        <div class="admin-head">
+          <h1>Admin panel</h1>
+          <p id="roleLine" class="muted"></p>
+        </div>
+
+        <div id="tabBar" class="tab-bar" role="tablist">
+          <button class="tab-btn" data-tab="members" type="button" role="tab">Members</button>
+          <button class="tab-btn" data-tab="broadcast" type="button" role="tab">Broadcast</button>
+          <button class="tab-btn" data-tab="blog" type="button" role="tab">Blog</button>
+          <button class="tab-btn" data-tab="admins" type="button" role="tab">Admins</button>
+        </div>
+
+        <!-- ---- Members tab ---- -->
+        <section id="tab-members" class="tab-panel" data-panel="members">
+          <div class="panel-toolbar">
+            <input id="memberSearch" class="input" type="search" placeholder="Search by email or name">
+            <button id="refreshMembers" class="btn ghost small" type="button">Refresh</button>
+          </div>
+          <div class="table-wrap card">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Name</th>
+                  <th>Plan</th>
+                  <th>Status</th>
+                  <th>Usage</th>
+                  <th>Resumes</th>
+                  <th>Created</th>
+                  <th>Last active</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="membersBody"></tbody>
+            </table>
+          </div>
+          <p id="membersEmpty" class="empty-note hidden">No members found.</p>
+        </section>
+
+        <!-- ---- Broadcast tab ---- -->
+        <section id="tab-broadcast" class="tab-panel" data-panel="broadcast">
+          <div class="card form-card">
+            <h2>Send a broadcast notification</h2>
+            <p class="hint">Sends one notification to every account on the platform.</p>
+            <label class="field">
+              <span>Title</span>
+              <input id="broadcastTitle" class="input" type="text" maxlength="140" placeholder="What's new">
+            </label>
+            <label class="field">
+              <span>Body</span>
+              <textarea id="broadcastBody" class="input" rows="4" placeholder="Message details"></textarea>
+            </label>
+            <div>
+              <button id="sendBroadcast" class="btn primary" type="button">Send broadcast</button>
+            </div>
+            <p id="broadcastResult" class="result-text hidden"></p>
+          </div>
+        </section>
+
+        <!-- ---- Blog tab ---- -->
+        <section id="tab-blog" class="tab-panel" data-panel="blog">
+          <div class="panel-toolbar">
+            <div></div>
+            <button id="newPostButton" class="btn primary small" type="button">New post</button>
+          </div>
+
+          <div id="postEditor" class="card form-card hidden">
+            <h2 id="postEditorTitle">New post</h2>
+            <label class="field">
+              <span>Title</span>
+              <input id="postTitle" class="input" type="text">
+            </label>
+            <label class="field">
+              <span>Slug</span>
+              <input id="postSlug" class="input" type="text" placeholder="auto-generated-from-title">
+            </label>
+            <label class="field">
+              <span>Excerpt</span>
+              <textarea id="postExcerpt" class="input" rows="2"></textarea>
+            </label>
+            <label class="field">
+              <span>Content</span>
+              <textarea id="postContent" class="input" rows="12"></textarea>
+              <p class="hint">## heading, **bold**, *italic*, - list, [link](https://...)</p>
+            </label>
+            <div class="modal-actions" style="justify-content: flex-start;">
+              <button id="savePostDraft" class="btn ghost" type="button">Save draft</button>
+              <button id="publishPost" class="btn primary" type="button">Publish</button>
+              <button id="cancelPostEdit" class="btn ghost" type="button">Cancel</button>
+            </div>
+          </div>
+
+          <div class="table-wrap card">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Updated</th>
+                  <th>Published</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="postsBody"></tbody>
+            </table>
+          </div>
+          <p id="postsEmpty" class="empty-note hidden">No posts yet.</p>
+        </section>
+
+        <!-- ---- Admins tab ---- -->
+        <section id="tab-admins" class="tab-panel" data-panel="admins">
+          <div class="card form-card">
+            <h2>Add an admin</h2>
+            <div class="inline-fields">
+              <input id="newAdminEmail" class="input" type="email" placeholder="email@example.com">
+              <select id="newAdminRole" class="input plan-select">
+                <option value="owner">Owner</option>
+                <option value="moderator">Moderator</option>
+                <option value="writer">Writer</option>
+              </select>
+              <button id="addAdminButton" class="btn primary" type="button">Add admin</button>
+            </div>
+          </div>
+          <div class="table-wrap card">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Account bound</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="adminsBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Notify modal -->
+    <div id="notifyModal" class="modal-overlay hidden">
+      <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="notifyModalTitle">
+        <div class="modal-head">
+          <h2 id="notifyModalTitle">Send notification</h2>
+          <button class="icon-close js-close-modal" data-modal="notifyModal" type="button" aria-label="Close">&times;</button>
+        </div>
+        <p id="notifySub" class="modal-sub muted"></p>
+        <label class="field">
+          <span>Title</span>
+          <input id="notifyTitle" class="input" type="text" maxlength="140">
+        </label>
+        <label class="field">
+          <span>Body</span>
+          <textarea id="notifyBody" class="input" rows="4"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="btn ghost js-close-modal" data-modal="notifyModal" type="button">Cancel</button>
+          <button id="sendNotifyButton" class="btn primary" type="button">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Email modal -->
+    <div id="emailModal" class="modal-overlay hidden">
+      <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="emailModalTitle">
+        <div class="modal-head">
+          <h2 id="emailModalTitle">Send email</h2>
+          <button class="icon-close js-close-modal" data-modal="emailModal" type="button" aria-label="Close">&times;</button>
+        </div>
+        <p id="emailSub" class="modal-sub muted"></p>
+        <label class="field">
+          <span>Subject</span>
+          <input id="emailSubject" class="input" type="text" maxlength="140">
+        </label>
+        <label class="field">
+          <span>Body</span>
+          <textarea id="emailBody" class="input" rows="5"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="btn ghost js-close-modal" data-modal="emailModal" type="button">Cancel</button>
+          <button id="sendEmailButton" class="btn primary" type="button">Send email</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete member modal -->
+    <div id="deleteModal" class="modal-overlay hidden">
+      <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+        <div class="modal-head">
+          <h2 id="deleteModalTitle">Delete account</h2>
+          <button class="icon-close js-close-modal" data-modal="deleteModal" type="button" aria-label="Close">&times;</button>
+        </div>
+        <p class="danger-text">This permanently deletes the account and all of its resumes, generations, revisions, match checks, devices, and notifications. This cannot be undone.</p>
+        <label class="field">
+          <span id="deleteConfirmLabel">Type the account email to confirm</span>
+          <input id="deleteConfirmInput" class="input" type="text" autocomplete="off">
+        </label>
+        <div class="modal-actions">
+          <button class="btn ghost js-close-modal" data-modal="deleteModal" type="button">Cancel</button>
+          <button id="confirmDeleteButton" class="btn primary" type="button" disabled>Delete account</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <script src="/admin.js"></script>
+  </body>
+</html>

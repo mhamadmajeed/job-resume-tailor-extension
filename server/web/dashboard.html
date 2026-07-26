@@ -52,6 +52,139 @@
         color: #fff;
       }
 
+      .plan-badge.elite {
+        background: #6b3fa0;
+        color: #fff;
+      }
+
+      /* ---- Notification bell ---- */
+
+      .notif-bell {
+        position: relative;
+      }
+
+      .notif-bell-button {
+        position: relative;
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        border-radius: 8px;
+        cursor: pointer;
+        padding: 0;
+      }
+
+      .notif-bell-button:hover {
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      .notif-badge {
+        position: absolute;
+        top: -2px;
+        right: -2px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        border-radius: 999px;
+        background: #c0392b;
+        color: #fff;
+        font-size: 10px;
+        font-weight: 750;
+        line-height: 16px;
+        text-align: center;
+      }
+
+      .notif-panel {
+        position: absolute;
+        top: calc(100% + 10px);
+        right: 0;
+        width: 320px;
+        max-width: calc(100vw - 32px);
+        max-height: 400px;
+        overflow-y: auto;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        z-index: 50;
+        padding: 8px;
+      }
+
+      .notif-panel-head {
+        font-size: 13px;
+        font-weight: 700;
+        padding: 6px 8px 10px;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 6px;
+      }
+
+      .notif-empty {
+        padding: 24px 8px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+        margin: 0;
+      }
+
+      .notif-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        font: inherit;
+        border: none;
+        background: transparent;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 10px 8px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      .notif-item:hover {
+        background: var(--bg);
+      }
+
+      .notif-item.unread {
+        background: var(--accent-soft);
+      }
+
+      .notif-item.unread:hover {
+        background: #d9ece8;
+      }
+
+      .notif-item-title {
+        font-size: 13px;
+        font-weight: 700;
+        margin: 0;
+        color: var(--ink);
+      }
+
+      .notif-item-body {
+        font-size: 12.5px;
+        color: var(--muted);
+        margin: 0;
+        white-space: pre-wrap;
+      }
+
+      .notif-item-date {
+        font-size: 11px;
+        color: var(--muted);
+        margin: 0;
+      }
+
+      /* ---- Upgrade buttons (quota card) ---- */
+
+      .upgrade-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
       /* ---- Main layout ---- */
 
       .dash-main {
@@ -374,6 +507,19 @@
         <nav class="nav-links" aria-label="Primary">
           <a id="navSignInLink" class="btn primary small hidden" href="#">Sign in</a>
           <div id="navUser" class="nav-user hidden">
+            <div id="notifBell" class="notif-bell">
+              <button id="notifBellButton" type="button" class="notif-bell-button" aria-haspopup="true" aria-expanded="false" aria-label="Notifications">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                </svg>
+                <span id="notifBadge" class="notif-badge hidden">0</span>
+              </button>
+              <div id="notifPanel" class="notif-panel hidden" role="menu" aria-label="Notifications">
+                <p class="notif-panel-head">Notifications</p>
+                <div id="notifList"></div>
+              </div>
+            </div>
             <img id="userPic" class="user-pic hidden" alt="">
             <span id="userName" class="user-name"></span>
             <span id="userPlanBadge" class="plan-badge">Free</span>
@@ -404,7 +550,10 @@
           <p id="quotaText" class="quota-text">Loading your usage...</p>
           <div class="quota-track"><div id="quotaFill" class="quota-fill"></div></div>
           <div id="upgradeRow" class="upgrade-row hidden">
-            <button id="upgradeButton" type="button" class="btn primary">Upgrade to Pro - $29/mo</button>
+            <div class="upgrade-buttons">
+              <button id="upgradeProButton" type="button" class="btn primary hidden">Upgrade to Pro - $19/mo</button>
+              <button id="upgradeEliteButton" type="button" class="btn primary hidden">Go Elite - $29/mo</button>
+            </div>
             <p id="upgradeError" class="upgrade-error hidden"></p>
           </div>
         </section>

@@ -24,22 +24,31 @@ async function stripeRequest(env, path, body) {
   return data;
 }
 
-export async function createCheckoutSession(env, user, successUrl, cancelUrl) {
+export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan = 'pro') {
   if (!env.STRIPE_SECRET_KEY) {
     throw new Error('Billing is not configured yet (missing STRIPE_SECRET_KEY).');
   }
 
+  const normalizedPlan = plan === 'elite' ? 'elite' : 'pro';
+  const priceId = normalizedPlan === 'elite' ? env.ELITE_PRICE_ID : env.PRO_PRICE_ID;
+  if (!priceId) {
+    const missingVar = normalizedPlan === 'elite' ? 'ELITE_PRICE_ID' : 'PRO_PRICE_ID';
+    throw new Error(`Billing is not configured yet (missing ${missingVar}).`);
+  }
+
   return stripeRequest(env, '/checkout/sessions', {
     mode: 'subscription',
-    'line_items[0][price]': env.PRO_PRICE_ID,
+    'line_items[0][price]': priceId,
     'line_items[0][quantity]': 1,
     // Stripe's own Checkout page collects the payer's email; we only need to carry the
-    // device id through so the webhook can mark the right (anonymous) user as pro.
+    // device id through so the webhook can mark the right (anonymous) user as pro/elite.
     customer: user?.stripe_customer_id || undefined,
     success_url: successUrl,
     cancel_url: cancelUrl,
     'metadata[device_id]': user.id,
-    'subscription_data[metadata][device_id]': user.id
+    'metadata[plan]': normalizedPlan,
+    'subscription_data[metadata][device_id]': user.id,
+    'subscription_data[metadata][plan]': normalizedPlan
   });
 }
 

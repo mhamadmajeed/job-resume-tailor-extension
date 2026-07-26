@@ -6,6 +6,42 @@
     <title>Resume Tailor - Tailor your resume to any job with AI</title>
     <meta name="description" content="Resume Tailor checks your match score against any LinkedIn job, closes the keyword gaps, and generates a tailored PDF in one click.">
     <link rel="stylesheet" href="site.css">
+    <style>
+      /* Pricing now has 3 plans (Free / Pro / Elite) - site.css only ships a
+         2-column .pricing-grid, so widen it to 3 columns here rather than
+         editing the shared stylesheet. Falls back to the shared 1-column
+         mobile rule already defined in site.css. */
+      .pricing-grid {
+        grid-template-columns: repeat(3, 1fr);
+        max-width: 1080px;
+      }
+
+      .price-card {
+        position: relative;
+      }
+
+      .price-badge {
+        position: absolute;
+        top: -13px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--accent);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 4px 12px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+
+      @media (max-width: 720px) {
+        .pricing-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
   </head>
   <body>
     <header class="site-header">
@@ -147,7 +183,7 @@
           <div class="section-head">
             <span class="eyebrow">Pricing</span>
             <h2>Start free. Upgrade when you need more.</h2>
-            <p>Every plan includes the full feature set - match check, all four intensities, Boost, and chat refinement.</p>
+            <p>Every plan includes live match check with keyword gaps and dashboard sync. Pro and Elite unlock deeper tailoring intensities, Boost, and a bigger monthly quota.</p>
           </div>
           <div class="pricing-grid">
             <div class="price-card card">
@@ -160,27 +196,45 @@
                 </div>
               </div>
               <ul class="price-list">
-                <li>5 tailored resumes / month</li>
-                <li>Live match check with keyword chips</li>
-                <li>All 4 tailoring intensities</li>
-                <li>Boost and chat refinement</li>
+                <li>5 tailored resumes / 30 days</li>
+                <li>Light and Medium tailoring intensities</li>
+                <li>Live match check with keyword gaps</li>
                 <li>Dashboard sync</li>
               </ul>
               <a class="btn ghost block" href="https://github.com/mhamadmajeed/job-resume-tailor-extension" target="_blank" rel="noopener">Add to Chrome - it's free</a>
             </div>
             <div class="price-card featured card">
+              <span class="price-badge">Most popular</span>
               <div class="price-card-head">
                 <h3>Pro</h3>
                 <p class="muted">For a serious search across many applications a month.</p>
+                <div class="price-tag">
+                  <span class="price-amount">$19</span>
+                  <span class="price-period">/ month</span>
+                </div>
+              </div>
+              <ul class="price-list">
+                <li>100 tailored resumes / 30 days</li>
+                <li>+ Max tailoring intensity</li>
+                <li>Boost included</li>
+                <li>Everything in Free</li>
+              </ul>
+              <p class="price-note">Upgrade in app - sign in and manage billing from your dashboard. No checkout here.</p>
+            </div>
+            <div class="price-card card">
+              <div class="price-card-head">
+                <h3>Elite</h3>
+                <p class="muted">For the heaviest month of applications.</p>
                 <div class="price-tag">
                   <span class="price-amount">$29</span>
                   <span class="price-period">/ month</span>
                 </div>
               </div>
               <ul class="price-list">
-                <li>100 tailored resumes / month</li>
-                <li>Everything in Free</li>
+                <li>300 tailored resumes / 30 days</li>
+                <li>+ Ultra full-rewrite intensity</li>
                 <li>Priority support</li>
+                <li>Everything in Pro</li>
               </ul>
               <p class="price-note">Upgrade in app - sign in and manage billing from your dashboard. No checkout here.</p>
             </div>
