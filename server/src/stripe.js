@@ -53,7 +53,9 @@ export async function createPlanPrice(env, productId, amountUsd, interval = 'mon
 // discount.value_type decides the coupon shape: 'percent' -> percent_off, 'amount' ->
 // amount_off in cents (currency 'usd'). priceId is the CURRENT Stripe price for this
 // plan, resolved by the caller from plan_settings (admin-editable) - not read from env.
-export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan, priceId, discount = null) {
+// amount_off is defined PER MONTH, so a yearly checkout needs its own coupon worth
+// 12x the monthly amount - hence the per-cycle coupon cache columns on discounts.
+export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan, priceId, discount = null, cycle = 'monthly') {
   if (!env.STRIPE_SECRET_KEY) {
     throw new Error('Billing is not configured yet (missing STRIPE_SECRET_KEY).');
   }
@@ -79,22 +81,53 @@ export async function createCheckoutSession(env, user, successUrl, cancelUrl, pl
   };
 
   let couponId = null;
+  let mintedCoupon = false;
+  const isYearly = cycle === 'yearly';
   if (discount) {
-    couponId = discount.stripe_coupon_id || null;
+    couponId = (isYearly ? discount.stripe_coupon_id_yearly : discount.stripe_coupon_id) || null;
     if (!couponId) {
+      const monthsCovered = isYearly ? 12 : 1;
       const couponParams = discount.value_type === 'amount'
-        ? { amount_off: Math.round(discount.amount_off * 100), currency: 'usd', duration: 'forever', name: discount.name }
+        ? { amount_off: Math.round(discount.amount_off * monthsCovered * 100), currency: 'usd', duration: 'forever', name: discount.name }
         : { percent_off: discount.percent_off, duration: 'forever', name: discount.name };
       const coupon = await stripeRequest(env, '/coupons', couponParams);
       couponId = coupon.id;
+      mintedCoupon = true;
     }
     params['discounts[0][coupon]'] = couponId;
   }
 
   const session = await stripeRequest(env, '/checkout/sessions', params);
-  // Only surface couponId when this call minted a brand-new coupon (i.e. the discount
-  // row didn't already have one) - that's the signal the caller needs to persist it.
-  return { ...session, couponId: discount && !discount.stripe_coupon_id ? couponId : null };
+  // couponId/couponCycle are only surfaced when this call minted a brand-new coupon -
+  // that's the signal the caller needs to persist it onto the right per-cycle column.
+  return { ...session, couponId: mintedCoupon ? couponId : null, couponCycle: mintedCoupon ? cycle : null };
+}
+
+// Used when a plan change creates a second subscription: the old one gets cancelled
+// so the customer is never billed for both.
+export async function cancelSubscription(env, subscriptionId) {
+  const response = await fetch(`${STRIPE_API}/subscriptions/${subscriptionId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`
+    }
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error?.message || 'Stripe request failed.');
+  }
+  return data;
+}
+
+export async function createBillingPortalSession(env, customerId, returnUrl) {
+  if (!env.STRIPE_SECRET_KEY) {
+    throw new Error('Billing is not configured yet (missing STRIPE_SECRET_KEY).');
+  }
+  return stripeRequest(env, '/billing_portal/sessions', {
+    customer: customerId,
+    return_url: returnUrl
+  });
 }
 
 function toBytes(value) {

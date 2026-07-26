@@ -140,7 +140,11 @@ CREATE TABLE IF NOT EXISTS discounts (
   amount_off REAL,
   applies_to TEXT NOT NULL DEFAULT 'both',
   active INTEGER NOT NULL DEFAULT 0,
+  -- amount_off is always PER MONTH ($10 off means $120 off a yearly invoice), so
+  -- amount discounts need a different Stripe coupon per billing cycle. Percent
+  -- discounts scale naturally but get per-cycle coupons too, for uniformity.
   stripe_coupon_id TEXT NULL,
+  stripe_coupon_id_yearly TEXT NULL,
   created_at TEXT
 );
 

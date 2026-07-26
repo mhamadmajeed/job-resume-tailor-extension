@@ -1,19 +1,16 @@
 {
   "manifest_version": 3,
   "name": "ResumePilot",
-  "description": "Locally tailors a stored resume draft to keywords found on job listing pages.",
+  "description": "Tailors your saved resume to the job you are viewing with AI, via ResumePilot (resumepilot.co).",
   "version": "2.0.0",
   "permissions": [
     "activeTab",
     "scripting",
     "storage",
     "downloads",
-    "unlimitedStorage",
-    "tabs"
+    "unlimitedStorage"
   ],
   "host_permissions": [
-    "http://localhost:8787/*",
-    "https://*.up.railway.app/*",
     "https://resumepilot.co/*"
   ],
   "action": {

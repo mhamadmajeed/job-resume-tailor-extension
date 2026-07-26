@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import express from 'express';
 import { db } from './db.js';
-import { uuid, nowIso, deviceAuth, accountAuth, signToken, asyncRoute } from './util.js';
+import { uuid, nowIso, deviceAuth, accountAuth, signToken, asyncRoute, rateLimit } from './util.js';
 import { tailorResume, reviseResume, boostResume, scoreMatch } from './claude.js';
-import { createCheckoutSession, createPlanPrice, verifyStripeWebhook } from './stripe.js';
+import { createCheckoutSession, createPlanPrice, cancelSubscription, createBillingPortalSession, verifyStripeWebhook } from './stripe.js';
 import { exchangeCodeForTokens, verifyGoogleIdToken } from './google.js';
 import { errorPage, deviceConnectedPage } from './pages.js';
 import { adminRouter, bindAdminOnSignIn } from './admin.js';
@@ -19,12 +19,14 @@ const WEB_DIR = path.join(__dirname, '..', 'web');
 
 const app = express();
 const PORT = process.env.PORT || 8787;
+// Railway terminates TLS at its proxy; trust it so req.ip is the real client IP.
+app.set('trust proxy', 1);
 
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, X-Device-Id');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -48,12 +50,25 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
     const email = object.customer_details?.email || object.customer_email || null;
     const plan = object.metadata?.plan === 'elite' ? 'elite' : 'pro';
     if (ownerId) {
+      // A plan change goes through a fresh checkout, which creates a second
+      // subscription. Cancel the old one so the customer is not billed twice.
+      const existingUser = db.prepare('SELECT stripe_subscription_id FROM users WHERE id = ?').get(ownerId);
+      if (existingUser?.stripe_subscription_id && existingUser.stripe_subscription_id !== object.subscription) {
+        try {
+          await cancelSubscription(process.env, existingUser.stripe_subscription_id);
+        } catch (cancelError) {
+          console.error(`Failed to cancel old subscription ${existingUser.stripe_subscription_id}:`, cancelError);
+        }
+      }
+      // Resetting the quota window is safe here: this event only fires after payment.
       db.prepare(
         `INSERT INTO users (id, email, plan, generations_used, period_start, stripe_customer_id, stripe_subscription_id, created_at)
          VALUES (?, ?, ?, 0, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            plan = excluded.plan,
            email = COALESCE(excluded.email, users.email),
+           generations_used = 0,
+           period_start = excluded.period_start,
            stripe_customer_id = excluded.stripe_customer_id,
            stripe_subscription_id = excluded.stripe_subscription_id`
       ).run(ownerId, email, plan, nowIso(), object.customer, object.subscription, nowIso());
@@ -62,7 +77,9 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
 
   if (event.type === 'customer.subscription.updated') {
     const activePlan = object.metadata?.plan === 'elite' ? 'elite' : 'pro';
-    const plan = ['active', 'trialing'].includes(object.status) ? activePlan : 'free';
+    // past_due keeps the paid plan: Stripe retries the charge during dunning and
+    // fires subscription.deleted if every retry fails.
+    const plan = ['active', 'trialing', 'past_due'].includes(object.status) ? activePlan : 'free';
     db.prepare('UPDATE users SET plan = ? WHERE stripe_subscription_id = ?').run(plan, object.id);
   }
 
@@ -109,9 +126,11 @@ async function resolveCheckoutPriceId(plan, cycle) {
   const settings = getPlanSettings(plan);
   if (cycle !== 'yearly') return settings.stripe_price_id;
   if (settings.stripe_price_id_yearly) return settings.stripe_price_id_yearly;
-  if (!settings.price_usd_yearly || !settings.stripe_product_id) return null;
+  if (!settings.stripe_product_id) return null;
 
-  const priceId = await createPlanPrice(process.env, settings.stripe_product_id, settings.price_usd_yearly, 'year');
+  // Mint from the same effective yearly price the pricing UI displays, including
+  // the monthly-x12 fallback when no explicit yearly price is set.
+  const priceId = await createPlanPrice(process.env, settings.stripe_product_id, planPrice(plan, 'yearly'), 'year');
   db.prepare('UPDATE plan_settings SET stripe_price_id_yearly = ?, updated_at = ? WHERE plan = ?')
     .run(priceId, nowIso(), plan);
   return priceId;
@@ -312,13 +331,16 @@ function discountedPriceAmount(full, amountOff) {
   return Math.max(1, Math.round(full - amountOff));
 }
 
+// amount_off is defined PER MONTH: $10 off means $10 off each month, so a yearly
+// price gets 12x the amount taken off. Percent discounts scale by themselves.
 function offerPrices(discount, cycle = 'monthly') {
+  const monthsCovered = cycle === 'yearly' ? 12 : 1;
   const prices = {};
   for (const plan of ['pro', 'elite']) {
     if (discount.applies_to === 'both' || discount.applies_to === plan) {
       const full = planPrice(plan, cycle);
       const discounted = discount.value_type === 'amount'
-        ? discountedPriceAmount(full, discount.amount_off)
+        ? discountedPriceAmount(full, discount.amount_off * monthsCovered)
         : discountedPricePercent(full, discount.percent_off);
       prices[plan] = { full, discounted };
     }
@@ -328,9 +350,10 @@ function offerPrices(discount, cycle = 'monthly') {
 
 // "20% off" or "$5 off" ("$5.50 off" when fractional) - the preformatted label the
 // landing bar / pricing chips / dashboard buttons show, so no client-side math needed.
-function offerText(discount) {
+// On the yearly toggle an amount discount shows its full-year worth ($10 off -> $120 off).
+function offerText(discount, cycle = 'monthly') {
   if (discount.value_type === 'amount') {
-    const amount = discount.amount_off;
+    const amount = discount.amount_off * (cycle === 'yearly' ? 12 : 1);
     const isWhole = Math.abs(amount - Math.round(amount)) < 1e-9;
     return isWhole ? `$${Math.round(amount)} off` : `$${amount.toFixed(2)} off`;
   }
@@ -404,6 +427,19 @@ function linkDeviceToAccount(linkToken, account) {
     db.prepare('UPDATE match_checks SET user_id = ? WHERE user_id = ?').run(account.id, deviceId);
   }
 
+  // Both rows exist: the account's data wins, but a paid subscription bought
+  // anonymously on this device must follow the person, not the browser install.
+  if (
+    deviceUser && existingAccountUser &&
+    deviceUser.stripe_subscription_id && deviceUser.plan !== 'free' &&
+    !existingAccountUser.stripe_subscription_id
+  ) {
+    db.prepare('UPDATE users SET plan = ?, stripe_customer_id = ?, stripe_subscription_id = ? WHERE id = ?')
+      .run(deviceUser.plan, deviceUser.stripe_customer_id, deviceUser.stripe_subscription_id, account.id);
+    db.prepare("UPDATE users SET plan = 'free', stripe_customer_id = NULL, stripe_subscription_id = NULL WHERE id = ?")
+      .run(deviceId);
+  }
+
   db.prepare(
     `INSERT INTO devices (device_id, account_id, linked_at) VALUES (?, ?, ?)
      ON CONFLICT(device_id) DO UPDATE SET account_id = excluded.account_id, linked_at = excluded.linked_at`
@@ -458,7 +494,10 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
   bindAdminOnSignIn(account, process.env.OWNER_EMAIL);
 
   if (stateRow.link_token) {
-    linkDeviceToAccount(stateRow.link_token, account);
+    const linkedDeviceId = linkDeviceToAccount(stateRow.link_token, account);
+    if (!linkedDeviceId) {
+      return res.status(400).send(errorPage('This sync request expired or was already used. Open the extension and click Sync with account again.'));
+    }
     return res.send(deviceConnectedPage(account.email));
   }
 
@@ -496,7 +535,7 @@ app.get('/api/offer', (req, res) => {
     valueType: offer.discount.value_type,
     percentOff: offer.discount.value_type === 'amount' ? null : offer.discount.percent_off,
     amountOff: offer.discount.value_type === 'amount' ? offer.discount.amount_off : null,
-    offText: offerText(offer.discount),
+    offText: offerText(offer.discount, cycle),
     appliesTo: offer.discount.applies_to,
     cycle,
     prices: offerPrices(offer.discount, cycle)
@@ -563,7 +602,14 @@ authed.post('/resume', (req, res) => {
   res.json({ ok: true });
 });
 
-authed.post('/generate', asyncRoute(async (req, res) => {
+authed.delete('/resume', (req, res) => {
+  const ownerId = resolveOwnerId(req.deviceId);
+  db.prepare('DELETE FROM resumes WHERE user_id = ?').run(ownerId);
+  db.prepare('DELETE FROM match_checks WHERE user_id = ?').run(ownerId);
+  res.json({ ok: true });
+});
+
+authed.post('/generate', rateLimit('generate', 30, 120), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   if (user.status === 'paused') {
@@ -616,7 +662,7 @@ authed.post('/generate', asyncRoute(async (req, res) => {
 }));
 
 // Score-only check: one Claude call, no rewriting, nothing stored, no quota used.
-authed.post('/match', asyncRoute(async (req, res) => {
+authed.post('/match', rateLimit('match', 40, 200), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   if (user.status === 'paused') {
@@ -640,7 +686,7 @@ authed.post('/match', asyncRoute(async (req, res) => {
   });
 }));
 
-authed.post('/revise', asyncRoute(async (req, res) => {
+authed.post('/revise', rateLimit('revise', 40, 200), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   if (user.status === 'paused') {
@@ -670,7 +716,7 @@ authed.post('/revise', asyncRoute(async (req, res) => {
   });
 }));
 
-authed.post('/boost', asyncRoute(async (req, res) => {
+authed.post('/boost', rateLimit('boost', 30, 120), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   if (user.status === 'paused') {
@@ -720,9 +766,10 @@ authed.post('/checkout', asyncRoute(async (req, res) => {
 
   try {
     const priceId = await resolveCheckoutPriceId(plan, cycle);
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, priceId, discount);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, priceId, discount, cycle);
     if (session.couponId && discount) {
-      db.prepare('UPDATE discounts SET stripe_coupon_id = ? WHERE id = ?').run(session.couponId, discount.id);
+      const couponColumn = session.couponCycle === 'yearly' ? 'stripe_coupon_id_yearly' : 'stripe_coupon_id';
+      db.prepare(`UPDATE discounts SET ${couponColumn} = ? WHERE id = ?`).run(session.couponId, discount.id);
     }
     res.json({ url: session.url });
   } catch (checkoutError) {
@@ -805,13 +852,29 @@ account.post('/checkout', asyncRoute(async (req, res) => {
 
   try {
     const priceId = await resolveCheckoutPriceId(plan, cycle);
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, priceId, discount);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, priceId, discount, cycle);
     if (session.couponId && discount) {
-      db.prepare('UPDATE discounts SET stripe_coupon_id = ? WHERE id = ?').run(session.couponId, discount.id);
+      const couponColumn = session.couponCycle === 'yearly' ? 'stripe_coupon_id_yearly' : 'stripe_coupon_id';
+      db.prepare(`UPDATE discounts SET ${couponColumn} = ? WHERE id = ?`).run(session.couponId, discount.id);
     }
     res.json({ url: session.url });
   } catch (checkoutError) {
     res.status(500).json({ error: checkoutError.message });
+  }
+}));
+
+// Stripe-hosted billing portal: manage payment method, cancel, see invoices.
+account.post('/billing-portal', asyncRoute(async (req, res) => {
+  const user = getOrCreateUser(req.accountId);
+  if (!user.stripe_customer_id) {
+    return res.status(400).json({ error: 'No billing on file for this account.' });
+  }
+
+  try {
+    const session = await createBillingPortalSession(process.env, user.stripe_customer_id, `${process.env.PUBLIC_WEB_URL}/dashboard`);
+    res.json({ url: session.url });
+  } catch (portalError) {
+    res.status(500).json({ error: portalError.message });
   }
 }));
 

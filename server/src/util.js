@@ -1,3 +1,5 @@
+import { db } from './db.js';
+
 export function uuid() {
   return crypto.randomUUID();
 }
@@ -76,8 +78,43 @@ export async function accountAuth(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   const payload = await verifyToken(token, process.env.AUTH_SECRET);
   if (!payload?.aid) return res.status(401).json({ error: 'Sign in required.' });
+  // A valid token can outlive its account (deleted account, restored DB).
+  const account = db.prepare('SELECT id FROM accounts WHERE id = ?').get(payload.aid);
+  if (!account) return res.status(401).json({ error: 'Sign in required.' });
   req.accountId = payload.aid;
   next();
+}
+
+// Fixed-window in-memory rate limiting for the routes that spend Anthropic tokens.
+// Counts reset each window; the map is pruned of expired entries once it grows large.
+const RATE_WINDOW_MS = 60 * 60 * 1000;
+const rateHits = new Map();
+
+function bump(key, max, now) {
+  const entry = rateHits.get(key);
+  if (!entry || now >= entry.resetAt) {
+    rateHits.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return true;
+  }
+  entry.count += 1;
+  return entry.count <= max;
+}
+
+export function rateLimit(prefix, perDevice, perIp) {
+  return (req, res, next) => {
+    const now = Date.now();
+    if (rateHits.size > 50000) {
+      for (const [key, entry] of rateHits) {
+        if (now >= entry.resetAt) rateHits.delete(key);
+      }
+    }
+    const deviceOk = bump(`${prefix}:d:${req.deviceId}`, perDevice, now);
+    const ipOk = bump(`${prefix}:i:${req.ip}`, perIp, now);
+    if (!deviceOk || !ipOk) {
+      return res.status(429).json({ error: 'Too many requests. Try again in a little while.' });
+    }
+    next();
+  };
 }
 
 export function asyncRoute(handler) {

@@ -40,7 +40,8 @@ for (const statement of [
   "ALTER TABLE discounts ADD COLUMN value_type TEXT NOT NULL DEFAULT 'percent'",
   'ALTER TABLE discounts ADD COLUMN amount_off REAL',
   'ALTER TABLE plan_settings ADD COLUMN price_usd_yearly REAL',
-  'ALTER TABLE plan_settings ADD COLUMN stripe_price_id_yearly TEXT'
+  'ALTER TABLE plan_settings ADD COLUMN stripe_price_id_yearly TEXT',
+  'ALTER TABLE discounts ADD COLUMN stripe_coupon_id_yearly TEXT'
 ]) {
   try {
     db.exec(statement);

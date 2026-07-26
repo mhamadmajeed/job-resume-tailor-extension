@@ -1,21 +1,46 @@
+/* ResumePilot popup - dark AI theme, tokens mirrored from server/web/site.css */
+
 :root {
-  --bg: #f4f7f6;
-  --card: #ffffff;
-  --ink: #17211f;
-  --muted: #667873;
-  --accent: #14655e;
-  --accent-dark: #0e4b46;
-  --accent-soft: #e3f0ee;
-  --line: #e2e9e7;
-  --warn-bg: #fff7e6;
-  --warn-line: #f0d999;
-  --warn-ink: #6b5a2a;
+  /* Surfaces */
+  --bg: #0a0e1a;
+  --bg-soft: #0d1226;
+  --card: #121830;
+  --card-2: #171f3d;
+  --ink: #eef1f8;
+  --muted: #97a1b8;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-soft: rgba(255, 255, 255, 0.06);
+
+  /* Electric gradient accent: violet -> cyan */
+  --accent: #9b8afd;
+  --accent-solid: #7c5cff;
+  --accent-2: #22d3ee;
+  --accent-dark: #5b3ee0;
+  --accent-soft: rgba(124, 92, 255, 0.16);
+  --gradient: linear-gradient(135deg, #7c5cff 0%, #22d3ee 100%);
+  --gradient-h: linear-gradient(90deg, #7c5cff 0%, #22d3ee 100%);
+  --on-gradient: #05070d;
+
+  /* Status tints (kept readable on dark surfaces) */
+  --ok-bg: rgba(34, 211, 238, 0.14);
+  --ok-line: rgba(34, 211, 238, 0.35);
+  --ok-ink: #67e8f9;
+  --warn-bg: rgba(245, 158, 11, 0.14);
+  --warn-line: rgba(245, 158, 11, 0.4);
+  --warn-ink: #fbbf24;
+  --danger-ink: #f87171;
+
   --radius: 12px;
-  --shadow: 0 1px 2px rgba(23, 33, 31, 0.05), 0 4px 14px rgba(23, 33, 31, 0.06);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 30px -12px rgba(0, 0, 0, 0.65);
+  --glow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 12px 34px -12px rgba(124, 92, 255, 0.45);
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
 }
 
 body {
@@ -56,8 +81,8 @@ body {
   height: 34px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-  color: #fff;
+  background: var(--gradient);
+  color: var(--on-gradient);
   font-weight: 700;
   font-size: 13px;
   border-radius: 10px;
@@ -140,7 +165,7 @@ body {
 }
 
 .hint.error {
-  color: #a33b2e;
+  color: var(--danger-ink);
 }
 
 button:focus-visible,
@@ -162,12 +187,12 @@ button {
   border-radius: 9px;
   padding: 8px 12px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.05s;
+  transition: background 0.15s, border-color 0.15s, transform 0.05s, filter 0.15s;
 }
 
 button:hover:not(:disabled) {
-  border-color: #c8d4d1;
-  background: #fafcfb;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: var(--card-2);
 }
 
 button:active:not(:disabled) {
@@ -180,15 +205,17 @@ button:disabled {
 }
 
 button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 600;
+  background: var(--gradient);
+  border-color: transparent;
+  color: var(--on-gradient);
+  font-weight: 700;
+  box-shadow: var(--glow);
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--accent-dark);
-  border-color: var(--accent-dark);
+  background: var(--gradient);
+  border-color: transparent;
+  filter: brightness(1.07);
 }
 
 button.big {
@@ -226,15 +253,15 @@ button.small {
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  border: 1.5px dashed #c7d4d0;
+  border: 1.5px dashed rgba(255, 255, 255, 0.18);
   border-radius: 10px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
 
 .file-picker:hover {
-  border-color: var(--accent);
-  background: #fafcfb;
+  border-color: var(--accent-solid);
+  background: rgba(124, 92, 255, 0.08);
 }
 
 .file-picker input {
@@ -295,11 +322,11 @@ button.small {
 }
 
 .intensity-card:hover {
-  border-color: #c8d4d1;
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .intensity-option input:checked + .intensity-card {
-  border-color: var(--accent);
+  border-color: var(--accent-solid);
   background: var(--accent-soft);
 }
 
@@ -317,8 +344,8 @@ button.small {
   position: absolute;
   top: -6px;
   right: -4px;
-  background: var(--accent-dark);
-  color: #fff;
+  background: var(--gradient);
+  color: var(--on-gradient);
   font-size: 8.5px;
   font-weight: 750;
   text-transform: uppercase;
@@ -360,7 +387,7 @@ button.small {
 .progress-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--accent), #2b8f7f);
+  background: var(--gradient-h);
   border-radius: 999px;
   transition: width 0.25s ease;
 }
@@ -374,7 +401,7 @@ button.small {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fbfdfc;
+  background: var(--card-2);
 }
 
 .match-check-head {
@@ -431,9 +458,9 @@ button.small {
 }
 
 .chip.ok {
-  background: var(--accent-soft);
-  border-color: #c3ddd9;
-  color: var(--accent);
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
+  color: var(--ok-ink);
 }
 
 .chip.gap {
@@ -465,7 +492,7 @@ button.small {
   min-width: 76px;
   padding: 8px 10px;
   background: var(--accent-soft);
-  border: 1px solid #c3ddd9;
+  border: 1px solid rgba(124, 92, 255, 0.35);
   border-radius: 10px;
   text-align: center;
   flex-shrink: 0;
@@ -487,7 +514,7 @@ button.small {
 
 .match-delta {
   font-size: 10.5px;
-  color: #2e7d4f;
+  color: var(--ok-ink);
   margin-top: 2px;
   font-weight: 600;
 }
@@ -506,7 +533,7 @@ button.small {
 button.boost {
   width: 100%;
   background: var(--accent-soft);
-  border: 1.5px solid var(--accent);
+  border: 1.5px solid var(--accent-solid);
   color: var(--accent);
   font-weight: 650;
   border-radius: 10px;
@@ -514,9 +541,9 @@ button.boost {
 }
 
 button.boost:hover:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--gradient);
+  border-color: transparent;
+  color: var(--on-gradient);
 }
 
 /* ---- Upsell ---- */
@@ -574,14 +601,14 @@ button.boost:hover:not(:disabled) {
 
 .chat-message.user {
   align-self: flex-end;
-  background: var(--accent);
-  color: #fff;
+  background: var(--gradient);
+  color: var(--on-gradient);
   border-bottom-right-radius: 4px;
 }
 
 .chat-message.assistant {
   align-self: flex-start;
-  background: var(--bg);
+  background: var(--bg-soft);
   border: 1px solid var(--line);
   border-bottom-left-radius: 4px;
 }
@@ -599,11 +626,17 @@ button.boost:hover:not(:disabled) {
   border: 1px solid var(--line);
   border-radius: 9px;
   outline: none;
+  color: var(--ink);
+  background: var(--bg-soft);
   transition: border-color 0.15s;
 }
 
+.chat-row input::placeholder {
+  color: var(--muted);
+}
+
 .chat-row input:focus {
-  border-color: var(--accent);
+  border-color: var(--accent-solid);
 }
 
 /* ---- Editor ---- */
@@ -636,9 +669,13 @@ button.boost:hover:not(:disabled) {
   resize: vertical;
   outline: none;
   color: var(--ink);
-  background: #fbfdfc;
+  background: var(--bg-soft);
+}
+
+.editor textarea::placeholder {
+  color: var(--muted);
 }
 
 .editor textarea:focus {
-  border-color: var(--accent);
+  border-color: var(--accent-solid);
 }

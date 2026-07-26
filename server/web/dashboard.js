@@ -30,6 +30,8 @@ const upgradeEliteButton = document.querySelector('#upgradeEliteButton');
 const upgradeProCountdown = document.querySelector('#upgradeProCountdown');
 const upgradeEliteCountdown = document.querySelector('#upgradeEliteCountdown');
 const upgradeError = document.querySelector('#upgradeError');
+const billingRow = document.querySelector('#billingRow');
+const manageBillingButton = document.querySelector('#manageBillingButton');
 
 const resumeGrid = document.querySelector('#resumeGrid');
 const resumeEmpty = document.querySelector('#resumeEmpty');
@@ -240,6 +242,8 @@ function renderAccount(account) {
   upgradeProButton.classList.toggle('hidden', plan !== 'free');
   upgradeEliteButton.classList.toggle('hidden', plan === 'elite');
   upgradeRow.classList.toggle('hidden', plan === 'elite');
+  // Manage billing only applies to accounts with an active subscription.
+  billingRow.classList.toggle('hidden', plan !== 'pro' && plan !== 'elite');
   updateUpgradeButtonPricing();
 }
 
@@ -264,6 +268,24 @@ async function startCheckout(plan, button) {
 upgradeProButton.addEventListener('click', () => startCheckout('pro', upgradeProButton));
 upgradeEliteButton.addEventListener('click', () => startCheckout('elite', upgradeEliteButton));
 
+async function openBillingPortal() {
+  manageBillingButton.disabled = true;
+  try {
+    const data = await apiFetch('/account/billing-portal', { method: 'POST', body: JSON.stringify({}) });
+    if (data?.url) {
+      window.location.href = data.url;
+      return;
+    }
+    throw new Error('Billing is not configured yet. Please try again later.');
+  } catch (err) {
+    showToast(err.message || 'Could not open billing.');
+  } finally {
+    manageBillingButton.disabled = false;
+  }
+}
+
+manageBillingButton.addEventListener('click', openBillingPortal);
+
 // ---- Discount offer (upgrade button pricing + compact countdown) ----
 // GET /api/offer is public (no device auth) and same-origin, so the
 // rp_visitor cookie it sets/reads flows automatically. Discount enforcement
@@ -277,18 +299,22 @@ const PLAN_BUTTON_LABEL = { pro: 'Upgrade to Pro', elite: 'Go Elite' };
 let billingCycle = 'monthly';
 let currentOffer = null;
 let offerCountdownTimer = null;
+// Bumped on every loadOffer() so a slow response from a previous billing
+// cycle can never overwrite the latest one.
+let offerRequestId = 0;
 
-async function loadPlanPrices() {
+async function loadPlanPrices(cycle) {
   try {
-    const response = await fetch(`/api/plans?cycle=${billingCycle}`);
-    if (!response.ok) return;
+    const response = await fetch(`/api/plans?cycle=${cycle}`);
+    if (!response.ok) return null;
     const data = await response.json();
     if (data?.plans?.pro?.price && data?.plans?.elite?.price) {
-      planFullPrice = { pro: data.plans.pro.price, elite: data.plans.elite.price };
+      return { pro: data.plans.pro.price, elite: data.plans.elite.price };
     }
   } catch (_err) {
     // Keep the fallback prices.
   }
+  return null;
 }
 
 function formatOfferDuration(ms) {
@@ -349,14 +375,23 @@ function tickOfferCountdown() {
 }
 
 async function loadOffer() {
-  await loadPlanPrices();
+  const reqId = ++offerRequestId;
+  const cycle = billingCycle;
+
+  const prices = await loadPlanPrices(cycle);
+  if (reqId !== offerRequestId) return;
+  if (prices) planFullPrice = prices;
+
+  let offer = null;
   try {
-    const response = await fetch(`/api/offer?cycle=${billingCycle}`);
+    const response = await fetch(`/api/offer?cycle=${cycle}`);
     const data = response.ok ? await response.json() : { active: false };
-    currentOffer = data && data.active !== false && data.prices ? data : null;
+    offer = data && data.active !== false && data.prices ? data : null;
   } catch (_err) {
-    currentOffer = null;
+    offer = null;
   }
+  if (reqId !== offerRequestId) return;
+  currentOffer = offer;
 
   updateUpgradeButtonPricing();
   if (offerCountdownTimer) {

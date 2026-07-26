@@ -311,7 +311,7 @@
               </div>
               <ul class="price-list">
                 <li data-plan-quota="pro">100 tailored resumes / 30 days</li>
-                <li>Every feature in Free, 20x the volume</li>
+                <li data-plan-ratio="pro">Every feature in Free, 20x the volume</li>
                 <li>For a serious multi-application search</li>
               </ul>
               <p class="price-note">Upgrade in app - sign in and manage billing from your dashboard. No checkout here.</p>
@@ -414,6 +414,9 @@
         };
         var countdownTimer = null;
         var cycle = 'monthly';
+        // Bumped on every loadAll() so a slow response from a previous billing
+        // cycle can never render over the latest one.
+        var loadSeq = 0;
 
         function periodLabel() {
           return cycle === 'yearly' ? '/ year' : '/ month';
@@ -443,6 +446,13 @@
               quotaEl.textContent = info.limit + ' tailored resumes / 30 days';
             }
           });
+
+          // The hardcoded "20x" in the markup is the no-JS fallback; recompute
+          // it from the live limits so admin quota edits keep it honest.
+          var ratioEl = document.querySelector('[data-plan-ratio="pro"]');
+          if (ratioEl && plans.pro && plans.free && plans.pro.limit && plans.free.limit > 0) {
+            ratioEl.textContent = 'Every feature in Free, ' + Math.round(plans.pro.limit / plans.free.limit) + 'x the volume';
+          }
         }
 
         // "Save N%" on the yearly toggle - derived from the monthly-cycle prices
@@ -504,6 +514,7 @@
           var isUrgency = offer.type === 'urgency';
           var label = isUrgency ? 'Limited-time offer' : 'Sale';
           var offText = getOfferText(offer);
+          var planLabel = offer.appliesTo === 'pro' ? 'Pro' : offer.appliesTo === 'elite' ? 'Elite' : 'Pro & Elite';
           var expiresAtMs = isUrgency && offer.expiresAt ? new Date(offer.expiresAt).getTime() : null;
           var anyPlanApplied = false;
 
@@ -531,7 +542,7 @@
                 return;
               }
               var duration = formatDuration(remaining);
-              offerBarText.textContent = label + ': ' + offText + ' Pro & Elite - ends in ' + duration;
+              offerBarText.textContent = label + ': ' + offText + ' ' + planLabel + ' - ends in ' + duration;
               Object.keys(priceTags).forEach(function (plan) {
                 var tag = priceTags[plan];
                 var planPrice = offer.prices && offer.prices[plan];
@@ -543,7 +554,7 @@
                 }
               });
             } else {
-              offerBarText.textContent = label + ': ' + offText + ' Pro & Elite';
+              offerBarText.textContent = label + ': ' + offText + ' ' + planLabel;
               Object.keys(priceTags).forEach(function (plan) {
                 var tag = priceTags[plan];
                 var planPrice = offer.prices && offer.prices[plan];
@@ -570,13 +581,16 @@
         // Order matters: base prices first (so .price-full is correct), then the
         // offer layered on top for the same cycle.
         function loadAll() {
+          var seq = ++loadSeq;
           revertPrices();
           fetchJson('/api/plans?cycle=' + cycle)
             .then(function (plansData) {
+              if (seq !== loadSeq) return null;
               if (plansData) renderPlans(plansData);
               return fetchJson('/api/offer?cycle=' + cycle);
             })
             .then(function (offerData) {
+              if (seq !== loadSeq) return;
               if (offerData && offerData.active !== false) applyOffer(offerData);
             })
             .catch(function () {

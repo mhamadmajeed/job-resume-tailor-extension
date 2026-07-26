@@ -1020,6 +1020,7 @@ resumeFile.addEventListener('change', async () => {
 });
 
 clearResume.addEventListener('click', async () => {
+  try { await apiFetch('/api/resume', { method: 'DELETE' }); } catch (_e) {}
   await deleteResumeRecord();
   currentResumeText = '';
   serverHasResume = false;
@@ -1074,8 +1075,7 @@ checkMatch.addEventListener('click', async () => {
 });
 
 analyzeJob.addEventListener('click', async () => {
-  const resume = currentResumeText.trim();
-  if (!resume) {
+  if (!hasResume()) {
     saveState.textContent = 'Upload a resume first';
     return;
   }

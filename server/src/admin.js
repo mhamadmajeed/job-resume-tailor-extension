@@ -144,6 +144,7 @@ adminRouter.delete('/members/:id', requireRole('owner'), (req, res) => {
   const id = req.params.id;
   const account = db.prepare('SELECT id FROM accounts WHERE id = ?').get(id);
   if (!account) return res.status(404).json({ error: 'Member not found.' });
+  if (id === req.accountId) return res.status(400).json({ error: 'You cannot delete your own account.' });
 
   const generationIds = db.prepare('SELECT id FROM generations WHERE user_id = ?').all(id).map((row) => row.id);
   for (const generationId of generationIds) {
@@ -155,6 +156,7 @@ adminRouter.delete('/members/:id', requireRole('owner'), (req, res) => {
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
   db.prepare('DELETE FROM devices WHERE account_id = ?').run(id);
   db.prepare('DELETE FROM notifications WHERE account_id = ?').run(id);
+  db.prepare('DELETE FROM admins WHERE account_id = ?').run(id);
   db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
 
   res.json({ ok: true });
@@ -280,11 +282,17 @@ adminRouter.delete('/posts/:id', requireRole('owner', 'writer'), (req, res) => {
 
 // ---- Discounts (owner only) - see DISCOUNT SPEC ----
 
-// $-off discounts must stay below the cheapest applicable plan's live price.
+// $-off discounts must stay below the cheapest applicable plan's live price. The
+// amount is applied per month (12x on a yearly invoice), so a yearly price counts
+// at its per-month equivalent.
 function cheapestApplicablePrice(appliesTo) {
-  if (appliesTo === 'pro') return getPlanSettings('pro').price_usd;
-  if (appliesTo === 'elite') return getPlanSettings('elite').price_usd;
-  return Math.min(getPlanSettings('pro').price_usd, getPlanSettings('elite').price_usd);
+  const plans = appliesTo === 'both' ? ['pro', 'elite'] : [appliesTo];
+  let ceiling = Infinity;
+  for (const plan of plans) {
+    const settings = getPlanSettings(plan);
+    ceiling = Math.min(ceiling, settings.price_usd, settings.price_usd_yearly ? settings.price_usd_yearly / 12 : Infinity);
+  }
+  return ceiling;
 }
 
 function mapDiscount(row) {
@@ -335,7 +343,7 @@ function validateDiscountInput(body) {
   const amountOff = Number(body?.amount_off);
   const ceiling = cheapestApplicablePrice(appliesTo);
   if (!Number.isFinite(amountOff) || amountOff <= 0 || amountOff >= ceiling) {
-    return { error: `amount_off must be greater than 0 and less than $${ceiling} for this applies_to.` };
+    return { error: `amount_off must be greater than 0 and less than $${ceiling.toFixed(2)} for this applies_to.` };
   }
   return { name, type, valueType, percentOff: 0, amountOff, appliesTo };
 }
@@ -359,8 +367,9 @@ adminRouter.post('/discounts', requireRole('owner'), (req, res) => {
 });
 
 // Editing keeps the row's active state untouched. If value_type, percent_off,
-// amount_off, or applies_to changed, the persisted Stripe coupon no longer matches
-// the discount, so stripe_coupon_id is cleared and the next checkout mints a fresh one.
+// amount_off, or applies_to changed, the persisted Stripe coupons (one per billing
+// cycle) no longer match the discount, so both are cleared and the next checkout
+// mints fresh ones.
 adminRouter.put('/discounts/:id', requireRole('owner'), (req, res) => {
   const existing = db.prepare('SELECT * FROM discounts WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Discount not found.' });
@@ -373,11 +382,12 @@ adminRouter.put('/discounts/:id', requireRole('owner'), (req, res) => {
     || parsed.amountOff !== existing.amount_off
     || parsed.appliesTo !== existing.applies_to;
   const stripeCouponId = couponStale ? null : existing.stripe_coupon_id;
+  const stripeCouponIdYearly = couponStale ? null : existing.stripe_coupon_id_yearly;
 
   db.prepare(
-    `UPDATE discounts SET name = ?, type = ?, value_type = ?, percent_off = ?, amount_off = ?, applies_to = ?, stripe_coupon_id = ?
+    `UPDATE discounts SET name = ?, type = ?, value_type = ?, percent_off = ?, amount_off = ?, applies_to = ?, stripe_coupon_id = ?, stripe_coupon_id_yearly = ?
      WHERE id = ?`
-  ).run(parsed.name, parsed.type, parsed.valueType, parsed.percentOff, parsed.amountOff, parsed.appliesTo, stripeCouponId, req.params.id);
+  ).run(parsed.name, parsed.type, parsed.valueType, parsed.percentOff, parsed.amountOff, parsed.appliesTo, stripeCouponId, stripeCouponIdYearly, req.params.id);
 
   res.json(mapDiscount(db.prepare('SELECT * FROM discounts WHERE id = ?').get(req.params.id)));
 });
@@ -464,7 +474,9 @@ adminRouter.put('/plans/:plan', requireRole('owner'), asyncRoute(async (req, res
     if (nextMonthly !== existing.price_usd) {
       stripePriceId = await createPlanPrice(process.env, existing.stripe_product_id, nextMonthly, 'month');
     }
-    if (nextYearly != null && nextYearly !== existing.price_usd_yearly) {
+    if (nextYearly == null) {
+      stripePriceIdYearly = null;
+    } else if (nextYearly !== existing.price_usd_yearly) {
       stripePriceIdYearly = await createPlanPrice(process.env, existing.stripe_product_id, nextYearly, 'year');
     }
     priceUsd = nextMonthly;
