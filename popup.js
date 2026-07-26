@@ -246,9 +246,30 @@ async function apiFetch(path, options = {}) {
   if (!response.ok) {
     // Any endpoint can answer "sign in first"; flip the popup to the gate.
     if (data?.code === 'SIGNIN_REQUIRED') setSignedInUI(false);
+    // 502/503/504 come from the host swapping containers during a deploy, not
+    // from our API - keep the status in the text so apiFetchRetry can spot it.
+    if ([502, 503, 504].includes(response.status) && !data?.error) {
+      throw new Error(`The server is restarting (${response.status}). Try again in a moment.`);
+    }
     throw new Error(data?.error || `Request failed (${response.status}).`);
   }
   return data;
+}
+
+// Retry wrapper for bootstrap calls (state load, sign-in start) where a transient
+// 502/503/504 or dropped connection just means the server is mid-restart. Never
+// used for generate/boost/revise - retrying those could double-spend credits.
+async function apiFetchRetry(path, options = {}, attempts = 3, onRetry = null) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await apiFetch(path, options);
+    } catch (error) {
+      const transient = /\((50[234])\)|Failed to fetch/.test(error?.message || '');
+      if (!transient || attempt >= attempts) throw error;
+      if (onRetry) onRetry(attempt);
+      await new Promise((resolve) => setTimeout(resolve, 2500 * attempt));
+    }
+  }
 }
 
 function renderQuota() {
@@ -385,7 +406,8 @@ function setSignedInUI(signedIn) {
 // Pulls plan, stored resume, and the latest generation from the server so closing
 // and reopening the popup never loses the user's work.
 async function restoreServerState() {
-  const state = await apiFetch('/api/state');
+  // Rides out brief server restarts so opening the popup mid-deploy still loads.
+  const state = await apiFetchRetry('/api/state', {}, 3);
   currentQuota = state.user;
   serverHasResume = Boolean(state.resume);
   renderQuota();
@@ -451,7 +473,20 @@ function stopPolling() {
 async function startSignIn(button) {
   button.disabled = true;
   try {
-    const r = await apiFetch('/api/link/start', { method: 'POST', body: JSON.stringify({}) });
+    // Retry through brief server restarts instead of failing the click outright;
+    // keep the user informed on whichever hint is on screen for this button.
+    const note = (message) => {
+      clearError(signinHint);
+      signinHint.textContent = message;
+      quotaState.textContent = message;
+    };
+    const r = await apiFetchRetry(
+      '/api/link/start',
+      { method: 'POST', body: JSON.stringify({}) },
+      4,
+      () => note('Waking up the server, one moment...')
+    );
+    quotaState.textContent = '';
     await chrome.tabs.create({ url: r.linkUrl });
 
     stopPolling();

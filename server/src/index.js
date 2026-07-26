@@ -582,6 +582,14 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
 // ---- Public offer API (no device auth - it's for the public website) ----
 // Registered before the authed router mount below so it never needs X-Device-Id.
 
+// Railway's deploy healthcheck (server/railway.json) polls this before switching
+// traffic to a new container, so rollovers stop serving 502s mid-boot. Touching the
+// DB proves the volume mounted and the schema loaded, not just that Express is up.
+app.get('/health', (req, res) => {
+  db.prepare('SELECT 1').get();
+  res.json({ ok: true });
+});
+
 // Live plan prices/quotas for the pricing UI (landing page, dashboard) - lets admin
 // price edits show up on the site without a redeploy. cycle=yearly returns yearly prices.
 app.get('/api/plans', (req, res) => {
