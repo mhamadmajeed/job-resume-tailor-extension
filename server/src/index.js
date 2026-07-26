@@ -268,31 +268,51 @@ function resolveActiveOffer(visitorId) {
   return null;
 }
 
-function discountedPrice(full, percentOff) {
+function discountedPricePercent(full, percentOff) {
   return Math.round(full * (100 - percentOff) / 100 * 100) / 100;
+}
+
+function discountedPriceAmount(full, amountOff) {
+  return Math.max(0.5, Math.round((full - amountOff) * 100) / 100);
 }
 
 function offerPrices(discount) {
   const prices = {};
   for (const plan of ['pro', 'elite']) {
     if (discount.applies_to === 'both' || discount.applies_to === plan) {
-      prices[plan] = { full: PLAN_PRICES[plan], discounted: discountedPrice(PLAN_PRICES[plan], discount.percent_off) };
+      const full = PLAN_PRICES[plan];
+      const discounted = discount.value_type === 'amount'
+        ? discountedPriceAmount(full, discount.amount_off)
+        : discountedPricePercent(full, discount.percent_off);
+      prices[plan] = { full, discounted };
     }
   }
   return prices;
 }
 
+// "20% off" or "$5 off" ("$5.50 off" when fractional) - the preformatted label the
+// landing bar / pricing chips / dashboard buttons show, so no client-side math needed.
+function offerText(discount) {
+  if (discount.value_type === 'amount') {
+    const amount = discount.amount_off;
+    const isWhole = Math.abs(amount - Math.round(amount)) < 1e-9;
+    return isWhole ? `$${Math.round(amount)} off` : `$${amount.toFixed(2)} off`;
+  }
+  return `${discount.percent_off}% off`;
+}
+
 // Checkout-time enforcement: read the visitor cookie (never create one here - checkout
 // isn't the public pricing surface) and resolve the same offer /api/offer would, then
-// narrow it to whether it actually covers this plan.
+// narrow it to whether it actually covers this plan. Returns the discounts row (or
+// null) - stripe.js decides the coupon shape from discount.value_type.
 function checkoutDiscountForPlan(req, plan) {
   const visitorId = parseCookies(req.headers.cookie).rp_visitor || null;
   const offer = resolveActiveOffer(visitorId);
-  if (!offer) return { percent: null, discount: null };
+  if (!offer) return null;
   if (offer.discount.applies_to !== 'both' && offer.discount.applies_to !== plan) {
-    return { percent: null, discount: null };
+    return null;
   }
-  return { percent: offer.discount.percent_off, discount: offer.discount };
+  return offer.discount;
 }
 
 // A device is anonymous (owner id = its own device id) until it's linked to an
@@ -422,7 +442,10 @@ app.get('/api/offer', (req, res) => {
 
   const response = {
     type: offer.type,
-    percentOff: offer.discount.percent_off,
+    valueType: offer.discount.value_type,
+    percentOff: offer.discount.value_type === 'amount' ? null : offer.discount.percent_off,
+    amountOff: offer.discount.value_type === 'amount' ? offer.discount.amount_off : null,
+    offText: offerText(offer.discount),
     appliesTo: offer.discount.applies_to,
     prices: offerPrices(offer.discount)
   };
@@ -640,10 +663,10 @@ authed.post('/checkout', asyncRoute(async (req, res) => {
 
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_BASE_URL}/billing/success`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_BASE_URL}/billing/cancel`;
-  const { percent: discountPercent, discount } = checkoutDiscountForPlan(req, plan);
+  const discount = checkoutDiscountForPlan(req, plan);
 
   try {
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, discountPercent, discount);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, discount);
     if (session.couponId && discount) {
       db.prepare('UPDATE discounts SET stripe_coupon_id = ? WHERE id = ?').run(session.couponId, discount.id);
     }
@@ -723,10 +746,10 @@ account.post('/checkout', asyncRoute(async (req, res) => {
   const plan = req.body?.plan === 'elite' ? 'elite' : 'pro';
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_WEB_URL}/dashboard?upgraded=1`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_WEB_URL}/dashboard`;
-  const { percent: discountPercent, discount } = checkoutDiscountForPlan(req, plan);
+  const discount = checkoutDiscountForPlan(req, plan);
 
   try {
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, discountPercent, discount);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, discount);
     if (session.couponId && discount) {
       db.prepare('UPDATE discounts SET stripe_coupon_id = ? WHERE id = ?').run(session.couponId, discount.id);
     }

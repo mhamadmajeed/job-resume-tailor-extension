@@ -285,7 +285,17 @@ function formatOfferDuration(ms) {
   return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
 }
 
+// offText is the server-preformatted label ("20% off" / "$5 off"). Fall
+// back to deriving it from percentOff for older/partial /api/offer
+// responses that don't send offText yet.
+function getOfferText(offer) {
+  if (offer && typeof offer.offText === 'string' && offer.offText) return offer.offText;
+  if (offer && offer.percentOff != null) return `${offer.percentOff}% off`;
+  return '';
+}
+
 function updateUpgradeButtonPricing() {
+  const offText = currentOffer ? getOfferText(currentOffer) : '';
   [
     { plan: 'pro', button: upgradeProButton, countdownEl: upgradeProCountdown },
     { plan: 'elite', button: upgradeEliteButton, countdownEl: upgradeEliteCountdown }
@@ -295,7 +305,7 @@ function updateUpgradeButtonPricing() {
     const planPrice = currentOffer && currentOffer.prices ? currentOffer.prices[plan] : null;
 
     button.textContent = planPrice
-      ? `${baseLabel} - $${planPrice.discounted}/mo (was $${planPrice.full})`
+      ? `${baseLabel} - $${planPrice.discounted}/mo (${offText ? `${offText}, ` : ''}was $${planPrice.full})`
       : `${baseLabel} - $${fullPrice}/mo`;
 
     const showCountdown = Boolean(planPrice) && currentOffer.type === 'urgency' && currentOffer.expiresAt;

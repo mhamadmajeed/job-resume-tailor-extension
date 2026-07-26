@@ -599,20 +599,25 @@
         <!-- ---- Discounts tab ---- -->
         <section id="tab-discounts" class="tab-panel" data-panel="discounts">
           <div class="card form-card">
-            <h2>Create a discount</h2>
+            <h2 id="discountFormTitle">Create a discount</h2>
             <div class="inline-fields">
               <input id="newDiscountName" class="input" type="text" placeholder="Name (e.g. Summer sale)">
               <select id="newDiscountType" class="input plan-select">
                 <option value="standard">Standard - always-on sale while active</option>
                 <option value="urgency">Urgency - first-visit personal countdown</option>
               </select>
-              <input id="newDiscountPercent" class="input" type="number" min="1" max="90" placeholder="% off">
+              <select id="discountValueType" class="input plan-select">
+                <option value="percent">% off</option>
+                <option value="amount">$ off</option>
+              </select>
+              <input id="newDiscountValue" class="input" type="number" min="1" max="90" step="1" placeholder="% off" aria-label="% off">
               <select id="newDiscountAppliesTo" class="input plan-select">
                 <option value="both">Pro &amp; Elite</option>
                 <option value="pro">Pro only</option>
                 <option value="elite">Elite only</option>
               </select>
               <button id="addDiscountButton" class="btn primary" type="button">Create discount</button>
+              <a id="cancelDiscountEdit" class="btn ghost small hidden" href="#">Cancel edit</a>
             </div>
             <p class="hint">
               Urgency: the first time a visitor loads pricing (or their 15-day cooldown has lapsed), the server
@@ -628,7 +633,7 @@
                 <tr>
                   <th>Name</th>
                   <th>Type</th>
-                  <th>% off</th>
+                  <th>Value</th>
                   <th>Applies to</th>
                   <th>Status</th>
                   <th>Actions</th>

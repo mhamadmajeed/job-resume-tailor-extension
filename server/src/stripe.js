@@ -28,7 +28,9 @@ async function stripeRequest(env, path, body) {
 // coupon behind it is created lazily on first use and reused afterward; when this call
 // creates a brand-new coupon its id is returned as .couponId so the caller can persist
 // it onto discounts.stripe_coupon_id (this module never writes to the DB itself).
-export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan = 'pro', discountPercent = null, discount = null) {
+// discount.value_type decides the coupon shape: 'percent' -> percent_off, 'amount' ->
+// amount_off in cents (currency 'usd').
+export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan = 'pro', discount = null) {
   if (!env.STRIPE_SECRET_KEY) {
     throw new Error('Billing is not configured yet (missing STRIPE_SECRET_KEY).');
   }
@@ -56,14 +58,13 @@ export async function createCheckoutSession(env, user, successUrl, cancelUrl, pl
   };
 
   let couponId = null;
-  if (discountPercent && discount) {
+  if (discount) {
     couponId = discount.stripe_coupon_id || null;
     if (!couponId) {
-      const coupon = await stripeRequest(env, '/coupons', {
-        percent_off: discountPercent,
-        duration: 'forever',
-        name: discount.name
-      });
+      const couponParams = discount.value_type === 'amount'
+        ? { amount_off: Math.round(discount.amount_off * 100), currency: 'usd', duration: 'forever', name: discount.name }
+        : { percent_off: discount.percent_off, duration: 'forever', name: discount.name };
+      const coupon = await stripeRequest(env, '/coupons', couponParams);
       couponId = coupon.id;
     }
     params['discounts[0][coupon]'] = couponId;

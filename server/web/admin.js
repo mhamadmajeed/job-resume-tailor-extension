@@ -34,6 +34,7 @@ let discounts = [];
 let admins = [];
 let editingPostId = null;
 let slugTouched = false;
+let editingDiscountId = null;
 let notifyTarget = null; // { id, email }
 let emailTarget = null; // { id, email }
 let deleteTarget = null; // { id, email }
@@ -690,6 +691,25 @@ function appliesToLabel(value) {
   return 'Pro & Elite';
 }
 
+function formatMoney(amount) {
+  const num = Number(amount);
+  if (Number.isNaN(num)) return '-';
+  return Number.isInteger(num) ? `$${num}` : `$${num.toFixed(2)}`;
+}
+
+// Value type is additive on top of the v1 percent-only discounts, so a row
+// missing value_type entirely (old data, or a backend that hasn't rolled
+// the column out yet) is treated as 'percent' for display purposes.
+function discountValueLabel(discount) {
+  const valueType = pick(discount, 'value_type', 'valueType') || 'percent';
+  if (valueType === 'amount') {
+    const amountOff = pick(discount, 'amount_off', 'amountOff');
+    return amountOff != null ? formatMoney(amountOff) : '-';
+  }
+  const percentOff = pick(discount, 'percent_off', 'percentOff');
+  return percentOff != null ? `${percentOff}%` : '-';
+}
+
 function renderDiscounts() {
   const tbody = document.querySelector('#discountsBody');
   tbody.innerHTML = '';
@@ -700,14 +720,13 @@ function renderDiscounts() {
 function renderDiscountRow(discount) {
   const id = pick(discount, 'id');
   const active = Boolean(pick(discount, 'active'));
-  const percentOff = pick(discount, 'percent_off', 'percentOff');
   const appliesTo = pick(discount, 'applies_to', 'appliesTo');
 
   const tr = document.createElement('tr');
   tr.innerHTML = `
     <td>${escapeHtml(pick(discount, 'name') || 'Untitled')}</td>
     <td>${escapeHtml(discountTypeLabel(pick(discount, 'type')))}</td>
-    <td class="cell-muted">${escapeHtml(percentOff != null ? `${percentOff}%` : '-')}</td>
+    <td class="cell-muted">${escapeHtml(discountValueLabel(discount))}</td>
     <td class="cell-muted">${escapeHtml(appliesToLabel(appliesTo))}</td>
     <td class="status-cell"></td>
     <td class="cell-actions"></td>
@@ -720,6 +739,13 @@ function renderDiscountRow(discount) {
   statusCell.appendChild(pill);
 
   const actions = tr.querySelector('.cell-actions');
+
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'btn ghost small';
+  editBtn.textContent = 'Edit';
+  editBtn.addEventListener('click', () => startEditDiscount(discount));
+  actions.appendChild(editBtn);
 
   const toggleBtn = document.createElement('button');
   toggleBtn.type = 'button';
@@ -763,6 +789,7 @@ async function deleteDiscount(id) {
   try {
     await apiFetch(`/admin/discounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
     discounts = discounts.filter((d) => pick(d, 'id') !== id);
+    if (editingDiscountId === id) resetDiscountForm();
     renderDiscounts();
     showToast('Discount deleted.');
   } catch (err) {
@@ -770,37 +797,142 @@ async function deleteDiscount(id) {
   }
 }
 
-document.querySelector('#addDiscountButton').addEventListener('click', async () => {
+// ---- Discounts tab: create / edit form ----
+// The same form drives both create and edit. editingDiscountId tracks which
+// mode we're in; the value-type select swaps the value input between a
+// percent field (1-90) and a dollar field (must stay under the cheapest
+// applicable plan price), and Save sends a POST or PUT accordingly.
+
+const discountFormTitle = document.querySelector('#discountFormTitle');
+const discountValueTypeSelect = document.querySelector('#discountValueType');
+const discountValueInput = document.querySelector('#newDiscountValue');
+const saveDiscountButton = document.querySelector('#addDiscountButton');
+const cancelDiscountEditLink = document.querySelector('#cancelDiscountEdit');
+
+function updateDiscountValueField() {
+  const isAmount = discountValueTypeSelect.value === 'amount';
+  discountValueInput.placeholder = isAmount ? '$ off (e.g. 5)' : '% off';
+  discountValueInput.setAttribute('aria-label', isAmount ? '$ off' : '% off');
+  discountValueInput.min = isAmount ? '0.01' : '1';
+  discountValueInput.step = isAmount ? '0.01' : '1';
+  if (isAmount) {
+    discountValueInput.removeAttribute('max');
+  } else {
+    discountValueInput.max = '90';
+  }
+}
+
+discountValueTypeSelect.addEventListener('change', updateDiscountValueField);
+updateDiscountValueField();
+
+function startEditDiscount(discount) {
+  editingDiscountId = pick(discount, 'id');
+  const valueType = pick(discount, 'value_type', 'valueType') || 'percent';
+
+  document.querySelector('#newDiscountName').value = pick(discount, 'name') || '';
+  document.querySelector('#newDiscountType').value = pick(discount, 'type') || 'standard';
+  discountValueTypeSelect.value = valueType;
+  updateDiscountValueField();
+
+  if (valueType === 'amount') {
+    const amountOff = pick(discount, 'amount_off', 'amountOff');
+    discountValueInput.value = amountOff != null ? amountOff : '';
+  } else {
+    const percentOff = pick(discount, 'percent_off', 'percentOff');
+    discountValueInput.value = percentOff != null ? percentOff : '';
+  }
+
+  document.querySelector('#newDiscountAppliesTo').value = pick(discount, 'applies_to', 'appliesTo') || 'both';
+
+  discountFormTitle.textContent = 'Edit discount';
+  saveDiscountButton.textContent = 'Save changes';
+  cancelDiscountEditLink.classList.remove('hidden');
+}
+
+function resetDiscountForm() {
+  editingDiscountId = null;
+  document.querySelector('#newDiscountName').value = '';
+  document.querySelector('#newDiscountType').value = 'standard';
+  discountValueTypeSelect.value = 'percent';
+  discountValueInput.value = '';
+  document.querySelector('#newDiscountAppliesTo').value = 'both';
+  updateDiscountValueField();
+
+  discountFormTitle.textContent = 'Create a discount';
+  saveDiscountButton.textContent = 'Create discount';
+  cancelDiscountEditLink.classList.add('hidden');
+}
+
+cancelDiscountEditLink.addEventListener('click', (event) => {
+  event.preventDefault();
+  resetDiscountForm();
+});
+
+// Returns a validated payload, or null (after showing a toast) if the form
+// is incomplete/invalid. Always sends both percent_off and amount_off so a
+// value-type switch on an existing discount clears the field that no
+// longer applies.
+function buildDiscountPayload() {
   const name = document.querySelector('#newDiscountName').value.trim();
   const type = document.querySelector('#newDiscountType').value;
-  const percentRaw = document.querySelector('#newDiscountPercent').value.trim();
+  const valueType = discountValueTypeSelect.value;
+  const valueRaw = discountValueInput.value.trim();
   const appliesTo = document.querySelector('#newDiscountAppliesTo').value;
-  const percentOff = Number(percentRaw);
 
   if (!name) {
     showToast('Add a name first.');
-    return;
-  }
-  if (!percentRaw || Number.isNaN(percentOff) || percentOff < 1 || percentOff > 90) {
-    showToast('Enter a percent off between 1 and 90.');
-    return;
+    return null;
   }
 
-  const btn = document.querySelector('#addDiscountButton');
-  btn.disabled = true;
+  const payload = { name, type, value_type: valueType, applies_to: appliesTo };
+
+  if (valueType === 'amount') {
+    const amountOff = Number(valueRaw);
+    const cap = appliesTo === 'elite' ? 29 : 19;
+    if (!valueRaw || Number.isNaN(amountOff) || amountOff <= 0 || amountOff >= cap) {
+      showToast(`Enter a dollar amount greater than $0 and less than $${cap}.`);
+      return null;
+    }
+    payload.amount_off = amountOff;
+    payload.percent_off = null;
+  } else {
+    const percentOff = Number(valueRaw);
+    if (!valueRaw || Number.isNaN(percentOff) || !Number.isInteger(percentOff) || percentOff < 1 || percentOff > 90) {
+      showToast('Enter a percent off between 1 and 90.');
+      return null;
+    }
+    payload.percent_off = percentOff;
+    payload.amount_off = null;
+  }
+
+  return payload;
+}
+
+saveDiscountButton.addEventListener('click', async () => {
+  const payload = buildDiscountPayload();
+  if (!payload) return;
+
+  saveDiscountButton.disabled = true;
   try {
-    await apiFetch('/admin/discounts', {
-      method: 'POST',
-      body: JSON.stringify({ name, type, percent_off: percentOff, applies_to: appliesTo })
-    });
-    document.querySelector('#newDiscountName').value = '';
-    document.querySelector('#newDiscountPercent').value = '';
-    showToast('Discount created.');
+    if (editingDiscountId) {
+      await apiFetch(`/admin/discounts/${encodeURIComponent(editingDiscountId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      showToast('Discount updated.');
+    } else {
+      await apiFetch('/admin/discounts', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      showToast('Discount created.');
+    }
+    resetDiscountForm();
     loadDiscounts();
   } catch (err) {
-    showToast(err.message || 'Could not create discount.');
+    showToast(err.message || (editingDiscountId ? 'Could not update discount.' : 'Could not create discount.'));
   } finally {
-    btn.disabled = false;
+    saveDiscountButton.disabled = false;
   }
 });
 

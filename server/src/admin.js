@@ -277,17 +277,67 @@ adminRouter.delete('/posts/:id', requireRole('owner', 'writer'), (req, res) => {
 
 // ---- Discounts (owner only) - see DISCOUNT SPEC ----
 
+// Kept local (same reasoning as PLAN_ENV_KEYS/PLAN_DEFAULTS above) to avoid a
+// circular import with index.js.
+const PLAN_PRICES = { pro: 19, elite: 29 };
+
+function cheapestApplicablePrice(appliesTo) {
+  if (appliesTo === 'pro') return PLAN_PRICES.pro;
+  if (appliesTo === 'elite') return PLAN_PRICES.elite;
+  return Math.min(PLAN_PRICES.pro, PLAN_PRICES.elite);
+}
+
 function mapDiscount(row) {
   return {
     id: row.id,
     name: row.name,
     type: row.type,
-    percentOff: row.percent_off,
+    valueType: row.value_type,
+    percentOff: row.value_type === 'amount' ? null : row.percent_off,
+    amountOff: row.value_type === 'amount' ? row.amount_off : null,
     appliesTo: row.applies_to,
     active: Boolean(row.active),
     stripeCouponId: row.stripe_coupon_id,
     createdAt: row.created_at
   };
+}
+
+// Shared by create and edit: validates a discount payload and returns either
+// { error } or the normalized fields ready to persist. percentOff/amountOff are
+// always both present in the result - whichever one is unused for this value_type
+// comes back as a safe placeholder (0 for percentOff, null for amountOff) so the
+// caller can bind them straight into the INSERT/UPDATE regardless of value_type.
+function validateDiscountInput(body) {
+  const name = String(body?.name || '').trim();
+  const type = String(body?.type || '');
+  const valueType = String(body?.value_type || 'percent');
+  const appliesTo = String(body?.applies_to || 'both');
+
+  if (!name) return { error: 'name is required.' };
+  if (!['standard', 'urgency'].includes(type)) {
+    return { error: 'type must be standard or urgency.' };
+  }
+  if (!['percent', 'amount'].includes(valueType)) {
+    return { error: 'value_type must be percent or amount.' };
+  }
+  if (!['both', 'pro', 'elite'].includes(appliesTo)) {
+    return { error: 'applies_to must be both, pro, or elite.' };
+  }
+
+  if (valueType === 'percent') {
+    const percentOff = Number(body?.percent_off);
+    if (!Number.isInteger(percentOff) || percentOff < 1 || percentOff > 90) {
+      return { error: 'percent_off must be an integer between 1 and 90.' };
+    }
+    return { name, type, valueType, percentOff, amountOff: null, appliesTo };
+  }
+
+  const amountOff = Number(body?.amount_off);
+  const ceiling = cheapestApplicablePrice(appliesTo);
+  if (!Number.isFinite(amountOff) || amountOff <= 0 || amountOff >= ceiling) {
+    return { error: `amount_off must be greater than 0 and less than $${ceiling} for this applies_to.` };
+  }
+  return { name, type, valueType, percentOff: 0, amountOff, appliesTo };
 }
 
 adminRouter.get('/discounts', requireRole('owner'), (req, res) => {
@@ -296,28 +346,40 @@ adminRouter.get('/discounts', requireRole('owner'), (req, res) => {
 });
 
 adminRouter.post('/discounts', requireRole('owner'), (req, res) => {
-  const name = String(req.body?.name || '').trim();
-  const type = String(req.body?.type || '');
-  const percentOff = Number(req.body?.percent_off);
-  const appliesTo = String(req.body?.applies_to || 'both');
-
-  if (!name) return res.status(400).json({ error: 'name is required.' });
-  if (!['standard', 'urgency'].includes(type)) {
-    return res.status(400).json({ error: 'type must be standard or urgency.' });
-  }
-  if (!Number.isInteger(percentOff) || percentOff < 1 || percentOff > 90) {
-    return res.status(400).json({ error: 'percent_off must be an integer between 1 and 90.' });
-  }
-  if (!['both', 'pro', 'elite'].includes(appliesTo)) {
-    return res.status(400).json({ error: 'applies_to must be both, pro, or elite.' });
-  }
+  const parsed = validateDiscountInput(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
 
   const id = uuid();
   db.prepare(
-    'INSERT INTO discounts (id, name, type, percent_off, applies_to, active, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)'
-  ).run(id, name, type, percentOff, appliesTo, nowIso());
+    `INSERT INTO discounts (id, name, type, value_type, percent_off, amount_off, applies_to, active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`
+  ).run(id, parsed.name, parsed.type, parsed.valueType, parsed.percentOff, parsed.amountOff, parsed.appliesTo, nowIso());
 
   res.json(mapDiscount(db.prepare('SELECT * FROM discounts WHERE id = ?').get(id)));
+});
+
+// Editing keeps the row's active state untouched. If value_type, percent_off,
+// amount_off, or applies_to changed, the persisted Stripe coupon no longer matches
+// the discount, so stripe_coupon_id is cleared and the next checkout mints a fresh one.
+adminRouter.put('/discounts/:id', requireRole('owner'), (req, res) => {
+  const existing = db.prepare('SELECT * FROM discounts WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Discount not found.' });
+
+  const parsed = validateDiscountInput(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+  const couponStale = parsed.valueType !== existing.value_type
+    || parsed.percentOff !== existing.percent_off
+    || parsed.amountOff !== existing.amount_off
+    || parsed.appliesTo !== existing.applies_to;
+  const stripeCouponId = couponStale ? null : existing.stripe_coupon_id;
+
+  db.prepare(
+    `UPDATE discounts SET name = ?, type = ?, value_type = ?, percent_off = ?, amount_off = ?, applies_to = ?, stripe_coupon_id = ?
+     WHERE id = ?`
+  ).run(parsed.name, parsed.type, parsed.valueType, parsed.percentOff, parsed.amountOff, parsed.appliesTo, stripeCouponId, req.params.id);
+
+  res.json(mapDiscount(db.prepare('SELECT * FROM discounts WHERE id = ?').get(req.params.id)));
 });
 
 // Activating a discount deactivates every other discount of the same type, so at most

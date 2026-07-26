@@ -36,7 +36,9 @@ for (const statement of [
   'ALTER TABLE generations ADD COLUMN job_text TEXT',
   'ALTER TABLE generations ADD COLUMN match_before INTEGER',
   'ALTER TABLE generations ADD COLUMN match_after INTEGER',
-  "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+  "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+  "ALTER TABLE discounts ADD COLUMN value_type TEXT NOT NULL DEFAULT 'percent'",
+  'ALTER TABLE discounts ADD COLUMN amount_off REAL'
 ]) {
   try {
     db.exec(statement);

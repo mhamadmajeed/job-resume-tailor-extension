@@ -379,6 +379,15 @@
           return pad2(hours) + ':' + pad2(minutes) + ':' + pad2(seconds);
         }
 
+        // offText is the server-preformatted label ("20% off" / "$5 off").
+        // Fall back to deriving it from percentOff for older/partial /api/offer
+        // responses that don't send offText yet.
+        function getOfferText(offer) {
+          if (offer && typeof offer.offText === 'string' && offer.offText) return offer.offText;
+          if (offer && offer.percentOff != null) return offer.percentOff + '% off';
+          return '';
+        }
+
         function revertPrices() {
           Object.keys(priceTags).forEach(function (plan) {
             var tag = priceTags[plan];
@@ -404,6 +413,7 @@
         function applyOffer(offer) {
           var isUrgency = offer.type === 'urgency';
           var label = isUrgency ? 'Limited-time offer' : 'Sale';
+          var offText = getOfferText(offer);
           var expiresAtMs = isUrgency && offer.expiresAt ? new Date(offer.expiresAt).getTime() : null;
           var anyPlanApplied = false;
 
@@ -431,19 +441,29 @@
                 return;
               }
               var duration = formatDuration(remaining);
-              offerBarText.textContent = label + ': ' + offer.percentOff + '% off Pro & Elite - ends in ' + duration;
+              offerBarText.textContent = label + ': ' + offText + ' Pro & Elite - ends in ' + duration;
               Object.keys(priceTags).forEach(function (plan) {
                 var tag = priceTags[plan];
                 var planPrice = offer.prices && offer.prices[plan];
                 if (!tag || !planPrice) return;
                 var chip = tag.querySelector('.offer-chip');
                 if (chip) {
-                  chip.textContent = duration + ' left';
+                  chip.textContent = offText + ' - ' + duration + ' left';
                   chip.classList.remove('hidden');
                 }
               });
             } else {
-              offerBarText.textContent = label + ': ' + offer.percentOff + '% off Pro & Elite';
+              offerBarText.textContent = label + ': ' + offText + ' Pro & Elite';
+              Object.keys(priceTags).forEach(function (plan) {
+                var tag = priceTags[plan];
+                var planPrice = offer.prices && offer.prices[plan];
+                if (!tag || !planPrice) return;
+                var chip = tag.querySelector('.offer-chip');
+                if (chip) {
+                  chip.textContent = offText;
+                  chip.classList.remove('hidden');
+                }
+              });
             }
           }
 
