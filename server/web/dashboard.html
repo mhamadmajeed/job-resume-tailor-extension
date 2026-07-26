@@ -205,6 +205,34 @@
         color: var(--accent);
       }
 
+      .upgrade-cycle-toggle {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        width: fit-content;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        margin-bottom: 10px;
+      }
+
+      .upgrade-cycle-toggle .cycle-btn {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 650;
+        padding: 5px 14px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+
+      .upgrade-cycle-toggle .cycle-btn.active {
+        background: var(--gradient);
+        color: var(--on-gradient);
+      }
+
       /* ---- Main layout ---- */
 
       .dash-main {
@@ -570,6 +598,10 @@
           <p id="quotaText" class="quota-text">Loading your usage...</p>
           <div class="quota-track"><div id="quotaFill" class="quota-fill"></div></div>
           <div id="upgradeRow" class="upgrade-row hidden">
+            <div id="upgradeCycleToggle" class="upgrade-cycle-toggle" role="group" aria-label="Billing cycle">
+              <button type="button" class="cycle-btn active" data-cycle="monthly">Monthly</button>
+              <button type="button" class="cycle-btn" data-cycle="yearly">Yearly</button>
+            </div>
             <div class="upgrade-buttons">
               <div class="upgrade-item">
                 <button id="upgradeProButton" type="button" class="btn primary hidden">Upgrade to Pro - $19/mo</button>

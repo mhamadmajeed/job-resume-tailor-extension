@@ -3,16 +3,19 @@ import { db } from './db.js';
 import { uuid, nowIso, accountAuth, asyncRoute } from './util.js';
 import { sendEmail } from './email.js';
 import { toSlug } from './blog.js';
+import { createPlanPrice } from './stripe.js';
 
 // Kept local (rather than imported from index.js) to avoid a circular import between
-// index.js (which mounts this router) and this file.
-const PLAN_ENV_KEYS = { free: 'FREE_GENERATION_LIMIT', pro: 'PRO_GENERATION_LIMIT', elite: 'ELITE_GENERATION_LIMIT' };
-const PLAN_DEFAULTS = { free: 5, pro: 100, elite: 300 };
+// index.js (which mounts this router) and this file. plan_settings is the single
+// source of truth for price/quota - see the same helpers in index.js.
+function getPlanSettings(plan) {
+  const row = db.prepare('SELECT * FROM plan_settings WHERE plan = ?').get(plan);
+  if (row) return row;
+  return { plan, price_usd: plan === 'free' ? 0 : 19, price_usd_yearly: null, generation_limit: 5, stripe_product_id: null, stripe_price_id: null, stripe_price_id_yearly: null };
+}
 
 function planLimit(plan) {
-  const envKey = PLAN_ENV_KEYS[plan] || PLAN_ENV_KEYS.free;
-  const fallback = PLAN_DEFAULTS[plan] || PLAN_DEFAULTS.free;
-  return Number(process.env[envKey] || fallback);
+  return getPlanSettings(plan).generation_limit;
 }
 
 function ensureUserRow(accountId) {
@@ -277,14 +280,11 @@ adminRouter.delete('/posts/:id', requireRole('owner', 'writer'), (req, res) => {
 
 // ---- Discounts (owner only) - see DISCOUNT SPEC ----
 
-// Kept local (same reasoning as PLAN_ENV_KEYS/PLAN_DEFAULTS above) to avoid a
-// circular import with index.js.
-const PLAN_PRICES = { pro: 19, elite: 29 };
-
+// $-off discounts must stay below the cheapest applicable plan's live price.
 function cheapestApplicablePrice(appliesTo) {
-  if (appliesTo === 'pro') return PLAN_PRICES.pro;
-  if (appliesTo === 'elite') return PLAN_PRICES.elite;
-  return Math.min(PLAN_PRICES.pro, PLAN_PRICES.elite);
+  if (appliesTo === 'pro') return getPlanSettings('pro').price_usd;
+  if (appliesTo === 'elite') return getPlanSettings('elite').price_usd;
+  return Math.min(getPlanSettings('pro').price_usd, getPlanSettings('elite').price_usd);
 }
 
 function mapDiscount(row) {
@@ -411,6 +411,74 @@ adminRouter.delete('/discounts/:id', requireRole('owner'), (req, res) => {
 });
 
 // ---- Admins management ----
+
+// ---- Plans (price + quota per plan, owner-only) ----
+
+function mapPlan(row) {
+  return {
+    plan: row.plan,
+    priceUsd: row.price_usd,
+    priceUsdYearly: row.price_usd_yearly,
+    generationLimit: row.generation_limit,
+    stripeProductId: row.stripe_product_id,
+    stripePriceId: row.stripe_price_id,
+    stripePriceIdYearly: row.stripe_price_id_yearly
+  };
+}
+
+adminRouter.get('/plans', requireRole('owner'), (req, res) => {
+  const rows = db.prepare('SELECT * FROM plan_settings ORDER BY price_usd ASC').all();
+  res.json(rows.map(mapPlan));
+});
+
+// Free has no Stripe price (nothing to charge). For pro/elite, changing price_usd or
+// price_usd_yearly mints a NEW Stripe price (prices are immutable) and swaps the stored
+// price id to it - existing subscribers keep their original price until they resubscribe.
+adminRouter.put('/plans/:plan', requireRole('owner'), asyncRoute(async (req, res) => {
+  const plan = req.params.plan;
+  const existing = db.prepare('SELECT * FROM plan_settings WHERE plan = ?').get(plan);
+  if (!existing) return res.status(404).json({ error: 'Unknown plan.' });
+
+  const generationLimit = Number(req.body?.generationLimit);
+  if (!Number.isFinite(generationLimit) || generationLimit <= 0) {
+    return res.status(400).json({ error: 'generationLimit must be a positive number.' });
+  }
+
+  let priceUsd = existing.price_usd;
+  let priceUsdYearly = existing.price_usd_yearly;
+  let stripePriceId = existing.stripe_price_id;
+  let stripePriceIdYearly = existing.stripe_price_id_yearly;
+
+  if (plan !== 'free') {
+    const nextMonthly = Number(req.body?.priceUsd);
+    const nextYearly = req.body?.priceUsdYearly === '' || req.body?.priceUsdYearly == null
+      ? null
+      : Number(req.body.priceUsdYearly);
+    if (!Number.isFinite(nextMonthly) || nextMonthly <= 0) {
+      return res.status(400).json({ error: 'priceUsd must be a positive number.' });
+    }
+    if (nextYearly != null && (!Number.isFinite(nextYearly) || nextYearly <= 0)) {
+      return res.status(400).json({ error: 'priceUsdYearly must be a positive number.' });
+    }
+
+    if (nextMonthly !== existing.price_usd) {
+      stripePriceId = await createPlanPrice(process.env, existing.stripe_product_id, nextMonthly, 'month');
+    }
+    if (nextYearly != null && nextYearly !== existing.price_usd_yearly) {
+      stripePriceIdYearly = await createPlanPrice(process.env, existing.stripe_product_id, nextYearly, 'year');
+    }
+    priceUsd = nextMonthly;
+    priceUsdYearly = nextYearly;
+  }
+
+  db.prepare(
+    `UPDATE plan_settings
+     SET price_usd = ?, price_usd_yearly = ?, generation_limit = ?, stripe_price_id = ?, stripe_price_id_yearly = ?, updated_at = ?
+     WHERE plan = ?`
+  ).run(priceUsd, priceUsdYearly, generationLimit, stripePriceId, stripePriceIdYearly, nowIso(), plan);
+
+  res.json(mapPlan(db.prepare('SELECT * FROM plan_settings WHERE plan = ?').get(plan)));
+}));
 
 adminRouter.get('/admins', requireRole('owner'), (req, res) => {
   const rows = db.prepare('SELECT * FROM admins ORDER BY created_at DESC').all();

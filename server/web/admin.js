@@ -5,7 +5,7 @@
 const SESSION_KEY = 'rt_session';
 
 const ROLE_TABS = {
-  owner: ['members', 'broadcast', 'blog', 'discounts', 'admins'],
+  owner: ['members', 'broadcast', 'blog', 'discounts', 'plans', 'admins'],
   moderator: ['members', 'broadcast', 'blog'],
   writer: ['blog']
 };
@@ -31,6 +31,7 @@ let currentAdmin = null; // { role, email, name }
 let members = [];
 let posts = [];
 let discounts = [];
+let plans = [];
 let admins = [];
 let editingPostId = null;
 let slugTouched = false;
@@ -235,6 +236,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
     if (btn.dataset.tab === 'members' && !members.length) loadMembers();
     if (btn.dataset.tab === 'blog' && !posts.length) loadPosts();
     if (btn.dataset.tab === 'discounts' && !discounts.length) loadDiscounts();
+    if (btn.dataset.tab === 'plans' && !plans.length) loadPlans();
     if (btn.dataset.tab === 'admins' && !admins.length) loadAdmins();
   });
 });
@@ -888,7 +890,15 @@ function buildDiscountPayload() {
 
   if (valueType === 'amount') {
     const amountOff = Number(valueRaw);
-    const cap = appliesTo === 'elite' ? 29 : 19;
+    // Cap $-off below the cheapest applicable plan's live price (falls back to
+    // the launch prices if the Plans tab hasn't been loaded yet).
+    const livePrice = (name) => {
+      const row = plans.find((p) => pick(p, 'plan') === name);
+      return row ? Number(pick(row, 'priceUsd', 'price_usd')) : null;
+    };
+    const cap = appliesTo === 'elite'
+      ? (livePrice('elite') || 29)
+      : (livePrice('pro') || 19);
     if (!valueRaw || Number.isNaN(amountOff) || amountOff <= 0 || amountOff >= cap) {
       showToast(`Enter a dollar amount greater than $0 and less than $${cap}.`);
       return null;
@@ -935,6 +945,139 @@ saveDiscountButton.addEventListener('click', async () => {
     saveDiscountButton.disabled = false;
   }
 });
+
+// ---- Plans tab ----
+// Each row is directly editable: price inputs (hidden for free) + quota input + Save.
+// Prices are whole dollars - Stripe checkout charges exactly what's stored here.
+
+async function loadPlans() {
+  try {
+    const rows = await apiFetch('/admin/plans');
+    plans = rows || [];
+    renderPlans();
+  } catch (err) {
+    showToast(err.message || 'Could not load plans.');
+  }
+}
+
+function planLabel(plan) {
+  if (plan === 'pro') return 'Pro';
+  if (plan === 'elite') return 'Elite';
+  return 'Free';
+}
+
+function renderPlans() {
+  const tbody = document.querySelector('#plansBody');
+  tbody.innerHTML = '';
+  plans.forEach((planRow) => tbody.appendChild(renderPlanRow(planRow)));
+}
+
+function renderPlanRow(planRow) {
+  const plan = pick(planRow, 'plan');
+  const isFree = plan === 'free';
+
+  const tr = document.createElement('tr');
+
+  const nameCell = document.createElement('td');
+  nameCell.textContent = planLabel(plan);
+  tr.appendChild(nameCell);
+
+  const monthlyCell = document.createElement('td');
+  const monthlyInput = document.createElement('input');
+  monthlyInput.className = 'input';
+  monthlyInput.type = 'number';
+  monthlyInput.min = '1';
+  monthlyInput.step = '1';
+  monthlyInput.style.maxWidth = '110px';
+  if (isFree) {
+    monthlyCell.textContent = 'Free';
+  } else {
+    monthlyInput.value = pick(planRow, 'priceUsd', 'price_usd') ?? '';
+    monthlyCell.appendChild(monthlyInput);
+  }
+  tr.appendChild(monthlyCell);
+
+  const yearlyCell = document.createElement('td');
+  const yearlyInput = document.createElement('input');
+  yearlyInput.className = 'input';
+  yearlyInput.type = 'number';
+  yearlyInput.min = '1';
+  yearlyInput.step = '1';
+  yearlyInput.style.maxWidth = '110px';
+  if (isFree) {
+    yearlyCell.textContent = '-';
+  } else {
+    yearlyInput.value = pick(planRow, 'priceUsdYearly', 'price_usd_yearly') ?? '';
+    yearlyCell.appendChild(yearlyInput);
+  }
+  tr.appendChild(yearlyCell);
+
+  const quotaCell = document.createElement('td');
+  const quotaInput = document.createElement('input');
+  quotaInput.className = 'input';
+  quotaInput.type = 'number';
+  quotaInput.min = '1';
+  quotaInput.step = '1';
+  quotaInput.style.maxWidth = '110px';
+  quotaInput.value = pick(planRow, 'generationLimit', 'generation_limit') ?? '';
+  quotaCell.appendChild(quotaInput);
+  tr.appendChild(quotaCell);
+
+  const actionsCell = document.createElement('td');
+  actionsCell.className = 'cell-actions';
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'btn primary small';
+  saveBtn.textContent = 'Save';
+  saveBtn.addEventListener('click', () => savePlan(plan, { monthlyInput, yearlyInput, quotaInput, saveBtn, isFree }));
+  actionsCell.appendChild(saveBtn);
+  tr.appendChild(actionsCell);
+
+  return tr;
+}
+
+async function savePlan(plan, { monthlyInput, yearlyInput, quotaInput, saveBtn, isFree }) {
+  const generationLimit = Number(quotaInput.value);
+  if (!Number.isFinite(generationLimit) || generationLimit <= 0) {
+    showToast('Generations per month must be a positive number.');
+    return;
+  }
+
+  const payload = { generationLimit };
+  if (!isFree) {
+    const priceUsd = Number(monthlyInput.value);
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
+      showToast('Monthly price must be a positive number.');
+      return;
+    }
+    payload.priceUsd = priceUsd;
+    const yearlyRaw = yearlyInput.value.trim();
+    if (yearlyRaw) {
+      const priceUsdYearly = Number(yearlyRaw);
+      if (!Number.isFinite(priceUsdYearly) || priceUsdYearly <= 0) {
+        showToast('Yearly price must be a positive number (or leave it empty).');
+        return;
+      }
+      payload.priceUsdYearly = priceUsdYearly;
+    }
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+  try {
+    await apiFetch(`/admin/plans/${encodeURIComponent(plan)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    showToast(`${planLabel(plan)} plan updated.`);
+    loadPlans();
+  } catch (err) {
+    showToast(err.message || 'Could not update plan.');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save';
+  }
+}
 
 // ---- Admins tab ----
 
@@ -1061,6 +1204,7 @@ async function boot() {
     if (allowed.includes('members')) loadMembers();
     if (allowed.includes('blog')) loadPosts();
     if (allowed.includes('discounts')) loadDiscounts();
+    if (allowed.includes('plans')) loadPlans();
     if (allowed.includes('admins')) loadAdmins();
   } catch (err) {
     if (err.message && err.message.toLowerCase().includes('sign in')) {

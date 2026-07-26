@@ -6,7 +6,7 @@ import express from 'express';
 import { db } from './db.js';
 import { uuid, nowIso, deviceAuth, accountAuth, signToken, asyncRoute } from './util.js';
 import { tailorResume, reviseResume, boostResume, scoreMatch } from './claude.js';
-import { createCheckoutSession, verifyStripeWebhook } from './stripe.js';
+import { createCheckoutSession, createPlanPrice, verifyStripeWebhook } from './stripe.js';
 import { exchangeCodeForTokens, verifyGoogleIdToken } from './google.js';
 import { errorPage, deviceConnectedPage } from './pages.js';
 import { adminRouter, bindAdminOnSignIn } from './admin.js';
@@ -78,14 +78,43 @@ app.use(express.urlencoded({ extended: true }));
 
 const PERIOD_DAYS = 30;
 
-// Three tiers stored in users.plan: free / pro / elite. See PLAN SPEC.
-const PLAN_ENV_KEYS = { free: 'FREE_GENERATION_LIMIT', pro: 'PRO_GENERATION_LIMIT', elite: 'ELITE_GENERATION_LIMIT' };
-const PLAN_DEFAULTS = { free: 5, pro: 100, elite: 300 };
+// Three tiers stored in users.plan: free / pro / elite, admin-editable via the
+// plan_settings table (price + monthly quota + the Stripe product/price backing it).
+// Env vars (FREE_GENERATION_LIMIT etc.) and hardcoded $19/$29 only matter as the
+// one-time seed in db.js - from here on the DB row is the single source of truth.
+function getPlanSettings(plan) {
+  const row = db.prepare('SELECT * FROM plan_settings WHERE plan = ?').get(plan);
+  if (row) return row;
+  // Should never happen post-seed, but keep the server usable if it does.
+  return { plan, price_usd: plan === 'free' ? 0 : 19, generation_limit: 5, stripe_product_id: null, stripe_price_id: null };
+}
 
 function planLimit(plan) {
-  const envKey = PLAN_ENV_KEYS[plan] || PLAN_ENV_KEYS.free;
-  const fallback = PLAN_DEFAULTS[plan] || PLAN_DEFAULTS.free;
-  return Number(process.env[envKey] || fallback);
+  return getPlanSettings(plan).generation_limit;
+}
+
+// cycle is 'monthly' or 'yearly'. Yearly is admin-set (usually ~2 months free vs.
+// monthly x12) and stored in its own column since it's a genuinely different price,
+// not a derived discount.
+function planPrice(plan, cycle = 'monthly') {
+  const settings = getPlanSettings(plan);
+  if (cycle === 'yearly') return settings.price_usd_yearly || Math.round(settings.price_usd * 12);
+  return settings.price_usd;
+}
+
+// The monthly Stripe price always exists (seeded / minted on admin save). The yearly
+// one is minted lazily on the first yearly checkout, so yearly billing works without
+// the admin ever having to open the Plans tab.
+async function resolveCheckoutPriceId(plan, cycle) {
+  const settings = getPlanSettings(plan);
+  if (cycle !== 'yearly') return settings.stripe_price_id;
+  if (settings.stripe_price_id_yearly) return settings.stripe_price_id_yearly;
+  if (!settings.price_usd_yearly || !settings.stripe_product_id) return null;
+
+  const priceId = await createPlanPrice(process.env, settings.stripe_product_id, settings.price_usd_yearly, 'year');
+  db.prepare('UPDATE plan_settings SET stripe_price_id_yearly = ?, updated_at = ? WHERE plan = ?')
+    .run(priceId, nowIso(), plan);
+  return priceId;
 }
 
 // intensity gates: 'max' requires pro+, 'ultra' requires elite. Returns a clear
@@ -145,9 +174,14 @@ function quotaExceededError(user) {
     return `You have used all ${limit} generations for this billing period.`;
   }
   if (user.plan === 'pro') {
-    return `You have used all ${limit} generations for this billing period. Upgrade to Elite for 300 a month.`;
+    const eliteLimit = planLimit('elite');
+    return `You have used all ${limit} generations for this billing period. Upgrade to Elite for ${eliteLimit} a month.`;
   }
-  return `Your ${limit} free tailored resumes for this month are used. Subscribe to keep going - Pro ($19/mo, 100/month) or Elite ($29/mo, 300/month).`;
+  const proPrice = planPrice('pro');
+  const proLimit = planLimit('pro');
+  const elitePrice = planPrice('elite');
+  const eliteLimit = planLimit('elite');
+  return `Your ${limit} free tailored resumes for this month are used. Subscribe to keep going - Pro ($${proPrice}/mo, ${proLimit}/month) or Elite ($${elitePrice}/mo, ${eliteLimit}/month).`;
 }
 
 // Check-match and generate must agree on the "before" score, so check results are
@@ -173,7 +207,6 @@ function getCachedMatchScore(userId, jobText) {
 
 // ---- Discounts / offers (see DISCOUNT SPEC) ----
 
-const PLAN_PRICES = { pro: 19, elite: 29 };
 const URGENCY_MIN_MS = 45 * 60 * 1000;
 const URGENCY_MAX_MS = 18 * 60 * 60 * 1000;
 const URGENCY_COOLDOWN_MS = 15 * 24 * 60 * 60 * 1000;
@@ -268,19 +301,22 @@ function resolveActiveOffer(visitorId) {
   return null;
 }
 
+// Displayed prices are always whole dollars - $16.33 reads as a bug, not a deal.
+// Stripe coupons still apply the exact percent/amount under the hood; this rounding
+// only affects what we show on the pricing UI before checkout.
 function discountedPricePercent(full, percentOff) {
-  return Math.round(full * (100 - percentOff) / 100 * 100) / 100;
+  return Math.max(1, Math.round(full * (100 - percentOff) / 100));
 }
 
 function discountedPriceAmount(full, amountOff) {
-  return Math.max(0.5, Math.round((full - amountOff) * 100) / 100);
+  return Math.max(1, Math.round(full - amountOff));
 }
 
-function offerPrices(discount) {
+function offerPrices(discount, cycle = 'monthly') {
   const prices = {};
   for (const plan of ['pro', 'elite']) {
     if (discount.applies_to === 'both' || discount.applies_to === plan) {
-      const full = PLAN_PRICES[plan];
+      const full = planPrice(plan, cycle);
       const discounted = discount.value_type === 'amount'
         ? discountedPriceAmount(full, discount.amount_off)
         : discountedPricePercent(full, discount.percent_off);
@@ -435,8 +471,23 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
 // ---- Public offer API (no device auth - it's for the public website) ----
 // Registered before the authed router mount below so it never needs X-Device-Id.
 
+// Live plan prices/quotas for the pricing UI (landing page, dashboard) - lets admin
+// price edits show up on the site without a redeploy. cycle=yearly returns yearly prices.
+app.get('/api/plans', (req, res) => {
+  const cycle = req.query.cycle === 'yearly' ? 'yearly' : 'monthly';
+  res.json({
+    cycle,
+    plans: {
+      free: { price: 0, limit: planLimit('free') },
+      pro: { price: planPrice('pro', cycle), limit: planLimit('pro') },
+      elite: { price: planPrice('elite', cycle), limit: planLimit('elite') }
+    }
+  });
+});
+
 app.get('/api/offer', (req, res) => {
   const visitorId = getOrSetVisitorId(req, res);
+  const cycle = req.query.cycle === 'yearly' ? 'yearly' : 'monthly';
   const offer = resolveActiveOffer(visitorId);
   if (!offer) return res.json({ active: false });
 
@@ -447,7 +498,8 @@ app.get('/api/offer', (req, res) => {
     amountOff: offer.discount.value_type === 'amount' ? offer.discount.amount_off : null,
     offText: offerText(offer.discount),
     appliesTo: offer.discount.applies_to,
-    prices: offerPrices(offer.discount)
+    cycle,
+    prices: offerPrices(offer.discount, cycle)
   };
   if (offer.type === 'urgency') response.expiresAt = offer.expiresAt;
   res.json(response);
@@ -660,13 +712,15 @@ authed.post('/checkout', asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
   const plan = req.body?.plan === 'elite' ? 'elite' : 'pro';
+  const cycle = req.body?.cycle === 'yearly' ? 'yearly' : 'monthly';
 
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_BASE_URL}/billing/success`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_BASE_URL}/billing/cancel`;
   const discount = checkoutDiscountForPlan(req, plan);
 
   try {
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, discount);
+    const priceId = await resolveCheckoutPriceId(plan, cycle);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, priceId, discount);
     if (session.couponId && discount) {
       db.prepare('UPDATE discounts SET stripe_coupon_id = ? WHERE id = ?').run(session.couponId, discount.id);
     }
@@ -744,12 +798,14 @@ account.get('/resumes/:id', (req, res) => {
 account.post('/checkout', asyncRoute(async (req, res) => {
   const user = getOrCreateUser(req.accountId);
   const plan = req.body?.plan === 'elite' ? 'elite' : 'pro';
+  const cycle = req.body?.cycle === 'yearly' ? 'yearly' : 'monthly';
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_WEB_URL}/dashboard?upgraded=1`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_WEB_URL}/dashboard`;
   const discount = checkoutDiscountForPlan(req, plan);
 
   try {
-    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, discount);
+    const priceId = await resolveCheckoutPriceId(plan, cycle);
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl, plan, priceId, discount);
     if (session.couponId && discount) {
       db.prepare('UPDATE discounts SET stripe_coupon_id = ? WHERE id = ?').run(session.couponId, discount.id);
     }

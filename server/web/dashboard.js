@@ -247,7 +247,7 @@ async function startCheckout(plan, button) {
   button.disabled = true;
   upgradeError.classList.add('hidden');
   try {
-    const data = await apiFetch('/account/checkout', { method: 'POST', body: JSON.stringify({ plan }) });
+    const data = await apiFetch('/account/checkout', { method: 'POST', body: JSON.stringify({ plan, cycle: billingCycle }) });
     if (data?.url) {
       window.location = data.url;
       return;
@@ -270,11 +270,26 @@ upgradeEliteButton.addEventListener('click', () => startCheckout('elite', upgrad
 // itself happens server-side at checkout - this only affects what the
 // buttons display.
 
-const PLAN_FULL_PRICE = { pro: 19, elite: 29 };
+// Fallbacks until /api/plans responds - the admin-set live prices replace these.
+let planFullPrice = { pro: 19, elite: 29 };
 const PLAN_BUTTON_LABEL = { pro: 'Upgrade to Pro', elite: 'Go Elite' };
 
+let billingCycle = 'monthly';
 let currentOffer = null;
 let offerCountdownTimer = null;
+
+async function loadPlanPrices() {
+  try {
+    const response = await fetch(`/api/plans?cycle=${billingCycle}`);
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data?.plans?.pro?.price && data?.plans?.elite?.price) {
+      planFullPrice = { pro: data.plans.pro.price, elite: data.plans.elite.price };
+    }
+  } catch (_err) {
+    // Keep the fallback prices.
+  }
+}
 
 function formatOfferDuration(ms) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -296,17 +311,18 @@ function getOfferText(offer) {
 
 function updateUpgradeButtonPricing() {
   const offText = currentOffer ? getOfferText(currentOffer) : '';
+  const per = billingCycle === 'yearly' ? '/yr' : '/mo';
   [
     { plan: 'pro', button: upgradeProButton, countdownEl: upgradeProCountdown },
     { plan: 'elite', button: upgradeEliteButton, countdownEl: upgradeEliteCountdown }
   ].forEach(({ plan, button, countdownEl }) => {
-    const fullPrice = PLAN_FULL_PRICE[plan];
+    const fullPrice = planFullPrice[plan];
     const baseLabel = PLAN_BUTTON_LABEL[plan];
     const planPrice = currentOffer && currentOffer.prices ? currentOffer.prices[plan] : null;
 
     button.textContent = planPrice
-      ? `${baseLabel} - $${planPrice.discounted}/mo (${offText ? `${offText}, ` : ''}was $${planPrice.full})`
-      : `${baseLabel} - $${fullPrice}/mo`;
+      ? `${baseLabel} - $${planPrice.discounted}${per} (${offText ? `${offText}, ` : ''}was $${planPrice.full})`
+      : `${baseLabel} - $${fullPrice}${per}`;
 
     const showCountdown = Boolean(planPrice) && currentOffer.type === 'urgency' && currentOffer.expiresAt;
     countdownEl.classList.toggle('hidden', !showCountdown);
@@ -333,8 +349,9 @@ function tickOfferCountdown() {
 }
 
 async function loadOffer() {
+  await loadPlanPrices();
   try {
-    const response = await fetch('/api/offer');
+    const response = await fetch(`/api/offer?cycle=${billingCycle}`);
     const data = response.ok ? await response.json() : { active: false };
     currentOffer = data && data.active !== false && data.prices ? data : null;
   } catch (_err) {
@@ -351,6 +368,18 @@ async function loadOffer() {
     offerCountdownTimer = setInterval(tickOfferCountdown, 1000);
   }
 }
+
+document.querySelectorAll('#upgradeCycleToggle .cycle-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const next = btn.dataset.cycle === 'yearly' ? 'yearly' : 'monthly';
+    if (next === billingCycle) return;
+    billingCycle = next;
+    document.querySelectorAll('#upgradeCycleToggle .cycle-btn').forEach((b) => {
+      b.classList.toggle('active', b === btn);
+    });
+    loadOffer();
+  });
+});
 
 // ---- Notifications ----
 

@@ -157,3 +157,23 @@ CREATE TABLE IF NOT EXISTS visitor_offers (
 
 CREATE INDEX IF NOT EXISTS idx_discounts_type_active ON discounts(type, active);
 CREATE INDEX IF NOT EXISTS idx_visitor_offers_visitor ON visitor_offers(visitor_id);
+
+-- Admin-editable plan configuration: price and monthly generation quota per plan.
+-- price_usd is 0 for 'free' (it has no Stripe price). Stripe prices are immutable
+-- once created, so changing price_usd for pro/elite mints a NEW Stripe price and
+-- swaps stripe_price_id to it - existing subscribers keep their original price
+-- until they resubscribe, which is intentional (no surprise price hikes).
+-- price_usd/stripe_price_id are the monthly price; price_usd_yearly/stripe_price_id_yearly
+-- are a separate, admin-set yearly price (usually cheaper than price_usd x 12), not a
+-- derived discount. The yearly Stripe price is minted lazily the first time an admin
+-- sets/changes price_usd_yearly - see createPlanPrice in stripe.js.
+CREATE TABLE IF NOT EXISTS plan_settings (
+  plan TEXT PRIMARY KEY,
+  price_usd REAL NOT NULL DEFAULT 0,
+  price_usd_yearly REAL,
+  generation_limit INTEGER NOT NULL,
+  stripe_product_id TEXT,
+  stripe_price_id TEXT,
+  stripe_price_id_yearly TEXT,
+  updated_at TEXT
+);

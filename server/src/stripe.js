@@ -24,22 +24,43 @@ async function stripeRequest(env, path, body) {
   return data;
 }
 
+// Stripe prices are immutable once created (you can't edit an existing price's
+// amount), so "changing a plan's price" means minting a new Price on the same
+// Product and pointing future checkouts at it. Existing subscribers keep whatever
+// price they originally subscribed at - Stripe does this automatically since their
+// subscription references the old price id, not the product.
+export async function createPlanPrice(env, productId, amountUsd, interval = 'month') {
+  if (!env.STRIPE_SECRET_KEY) {
+    throw new Error('Billing is not configured yet (missing STRIPE_SECRET_KEY).');
+  }
+  if (!productId) {
+    throw new Error('This plan has no Stripe product to attach a price to.');
+  }
+
+  const price = await stripeRequest(env, '/prices', {
+    product: productId,
+    unit_amount: Math.round(Number(amountUsd) * 100),
+    currency: 'usd',
+    'recurring[interval]': interval === 'year' ? 'year' : 'month'
+  });
+  return price.id;
+}
+
 // discount, when passed, is the discounts row to apply (see schema.sql). The Stripe
 // coupon behind it is created lazily on first use and reused afterward; when this call
 // creates a brand-new coupon its id is returned as .couponId so the caller can persist
 // it onto discounts.stripe_coupon_id (this module never writes to the DB itself).
 // discount.value_type decides the coupon shape: 'percent' -> percent_off, 'amount' ->
-// amount_off in cents (currency 'usd').
-export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan = 'pro', discount = null) {
+// amount_off in cents (currency 'usd'). priceId is the CURRENT Stripe price for this
+// plan, resolved by the caller from plan_settings (admin-editable) - not read from env.
+export async function createCheckoutSession(env, user, successUrl, cancelUrl, plan, priceId, discount = null) {
   if (!env.STRIPE_SECRET_KEY) {
     throw new Error('Billing is not configured yet (missing STRIPE_SECRET_KEY).');
   }
 
   const normalizedPlan = plan === 'elite' ? 'elite' : 'pro';
-  const priceId = normalizedPlan === 'elite' ? env.ELITE_PRICE_ID : env.PRO_PRICE_ID;
   if (!priceId) {
-    const missingVar = normalizedPlan === 'elite' ? 'ELITE_PRICE_ID' : 'PRO_PRICE_ID';
-    throw new Error(`Billing is not configured yet (missing ${missingVar}).`);
+    throw new Error(`Billing is not configured yet (no Stripe price set for the ${normalizedPlan} plan).`);
   }
 
   const params = {

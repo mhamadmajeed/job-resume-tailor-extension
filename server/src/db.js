@@ -38,11 +38,34 @@ for (const statement of [
   'ALTER TABLE generations ADD COLUMN match_after INTEGER',
   "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
   "ALTER TABLE discounts ADD COLUMN value_type TEXT NOT NULL DEFAULT 'percent'",
-  'ALTER TABLE discounts ADD COLUMN amount_off REAL'
+  'ALTER TABLE discounts ADD COLUMN amount_off REAL',
+  'ALTER TABLE plan_settings ADD COLUMN price_usd_yearly REAL',
+  'ALTER TABLE plan_settings ADD COLUMN stripe_price_id_yearly TEXT'
 ]) {
   try {
     db.exec(statement);
   } catch (_alreadyExists) {
     // Column is already there - nothing to do.
   }
+}
+
+// Seed the three plans once. Real Product/Price IDs from the live ResumePilot Stripe
+// products (created manually) are the defaults so checkout works immediately; the
+// admin panel can change price/quota from here on and this seed never runs again for
+// a plan once its row exists (ON CONFLICT DO NOTHING).
+const now = new Date().toISOString();
+// price_usd_yearly seeds at ~2 months free vs. monthly x12 (a common, easy-to-explain
+// yearly discount); stripe_price_id_yearly starts null and is minted on first admin save
+// in the Plans tab (a live Stripe API call, which this seed step can't make).
+const PLAN_SEEDS = [
+  { plan: 'free', price_usd: 0, price_usd_yearly: 0, generation_limit: 5, stripe_product_id: null, stripe_price_id: null, stripe_price_id_yearly: null },
+  { plan: 'pro', price_usd: 19, price_usd_yearly: 190, generation_limit: 100, stripe_product_id: 'prod_UxC778S14ApA5D', stripe_price_id: 'price_1TxHjeDiLpEG7BMio9JS9k8Y', stripe_price_id_yearly: null },
+  { plan: 'elite', price_usd: 29, price_usd_yearly: 290, generation_limit: 300, stripe_product_id: 'prod_UxC8XhbCXSP6JT', stripe_price_id: 'price_1TxHkeDiLpEG7BMi51A6xYFC', stripe_price_id_yearly: null }
+];
+const seedPlan = db.prepare(
+  `INSERT INTO plan_settings (plan, price_usd, price_usd_yearly, generation_limit, stripe_product_id, stripe_price_id, stripe_price_id_yearly, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(plan) DO NOTHING`
+);
+for (const seed of PLAN_SEEDS) {
+  seedPlan.run(seed.plan, seed.price_usd, seed.price_usd_yearly, seed.generation_limit, seed.stripe_product_id, seed.stripe_price_id, seed.stripe_price_id_yearly, now);
 }

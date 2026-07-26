@@ -42,6 +42,47 @@
         }
       }
 
+      /* ---- Monthly / yearly billing toggle ---- */
+
+      .billing-toggle {
+        display: flex;
+        justify-content: center;
+        gap: 6px;
+        margin: 0 auto 28px;
+        padding: 5px;
+        width: fit-content;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+      }
+
+      .cycle-btn {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 650;
+        padding: 8px 18px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+
+      .cycle-btn.active {
+        background: var(--gradient);
+        color: var(--on-gradient);
+      }
+
+      .cycle-save {
+        font-size: 11px;
+        font-weight: 750;
+        margin-left: 4px;
+      }
+
+      .cycle-btn:not(.active) .cycle-save {
+        color: var(--accent-2);
+      }
+
       /* ---- Discount offer bar + discounted pricing ---- */
 
       .hidden {
@@ -234,6 +275,10 @@
             <h2>Start free. Upgrade when you need more.</h2>
             <p>Every plan includes every feature - all four tailoring intensities, Boost, live match check with keyword gaps, and dashboard sync. Paid plans simply raise your monthly quota.</p>
           </div>
+          <div class="billing-toggle" id="billingToggle" role="group" aria-label="Billing cycle">
+            <button type="button" class="cycle-btn active" data-cycle="monthly">Monthly</button>
+            <button type="button" class="cycle-btn" data-cycle="yearly">Yearly <span class="cycle-save" id="yearlySaveChip"></span></button>
+          </div>
           <div class="pricing-grid">
             <div class="price-card card">
               <div class="price-card-head">
@@ -245,7 +290,7 @@
                 </div>
               </div>
               <ul class="price-list">
-                <li>5 tailored resumes / 30 days</li>
+                <li data-plan-quota="free">5 tailored resumes / 30 days</li>
                 <li>All four intensities, including Max &amp; Ultra</li>
                 <li>Boost + live match check with keyword gaps</li>
                 <li>Dashboard sync</li>
@@ -265,7 +310,7 @@
                 </div>
               </div>
               <ul class="price-list">
-                <li>100 tailored resumes / 30 days</li>
+                <li data-plan-quota="pro">100 tailored resumes / 30 days</li>
                 <li>Every feature in Free, 20x the volume</li>
                 <li>For a serious multi-application search</li>
               </ul>
@@ -283,7 +328,7 @@
                 </div>
               </div>
               <ul class="price-list">
-                <li>300 tailored resumes / 30 days</li>
+                <li data-plan-quota="elite">300 tailored resumes / 30 days</li>
                 <li>Every feature, maximum volume</li>
                 <li>Priority support</li>
               </ul>
@@ -354,10 +399,12 @@
         }
       })();
 
-      // ---- Discount offer (announcement bar + discounted pricing) ----
-      // GET /api/offer is public (no device auth) and same-origin, so the
-      // rp_visitor cookie it sets/reads flows automatically. Fails silently
-      // on any error - the page already renders full pricing by default.
+      // ---- Live pricing + billing cycle + discount offer ----
+      // GET /api/plans returns admin-set prices/quotas so this page never goes
+      // stale; GET /api/offer layers any active discount on top. Both are public
+      // (no device auth) and same-origin, so the rp_visitor cookie flows
+      // automatically. Fails silently on any error - the page already renders
+      // the launch pricing by default.
       (function () {
         var offerBar = document.getElementById('offerBar');
         var offerBarText = document.getElementById('offerBarText');
@@ -366,6 +413,49 @@
           elite: document.querySelector('.price-tag[data-plan="elite"]')
         };
         var countdownTimer = null;
+        var cycle = 'monthly';
+
+        function periodLabel() {
+          return cycle === 'yearly' ? '/ year' : '/ month';
+        }
+
+        // Base (undiscounted) prices, quotas, and the yearly "Save N%" chip.
+        function renderPlans(data) {
+          var plans = data && data.plans;
+          if (!plans) return;
+
+          ['pro', 'elite'].forEach(function (plan) {
+            var tag = priceTags[plan];
+            var info = plans[plan];
+            if (!tag || !info) return;
+            var full = tag.querySelector('.price-full');
+            var amount = tag.querySelector('.price-amount');
+            var period = tag.querySelector('.price-period');
+            if (full) full.textContent = '$' + info.price;
+            if (amount) amount.textContent = '$' + info.price;
+            if (period) period.textContent = periodLabel();
+          });
+
+          ['free', 'pro', 'elite'].forEach(function (plan) {
+            var quotaEl = document.querySelector('[data-plan-quota="' + plan + '"]');
+            var info = plans[plan];
+            if (quotaEl && info && info.limit) {
+              quotaEl.textContent = info.limit + ' tailored resumes / 30 days';
+            }
+          });
+        }
+
+        // "Save N%" on the yearly toggle - derived from the monthly-cycle prices
+        // (yearly price vs. monthly x12), so it stays correct when admin edits prices.
+        function renderSaveChip(monthlyData, yearlyData) {
+          var chip = document.getElementById('yearlySaveChip');
+          if (!chip || !monthlyData || !yearlyData) return;
+          var m = monthlyData.plans && monthlyData.plans.pro;
+          var y = yearlyData.plans && yearlyData.plans.pro;
+          if (!m || !y || !m.price || !y.price) return;
+          var savings = Math.round((1 - y.price / (m.price * 12)) * 100);
+          if (savings > 0) chip.textContent = 'Save ' + savings + '%';
+        }
 
         function pad2(n) {
           return n < 10 ? '0' + n : String(n);
@@ -473,14 +563,42 @@
           if (isUrgency) countdownTimer = setInterval(tick, 1000);
         }
 
-        fetch('/api/offer')
-          .then(function (res) { return res.ok ? res.json() : { active: false }; })
-          .then(function (data) {
-            if (data && data.active !== false) applyOffer(data);
-          })
-          .catch(function () {
-            // Non-critical enhancement - keep the default full pricing already in the markup.
+        function fetchJson(url) {
+          return fetch(url).then(function (res) { return res.ok ? res.json() : null; });
+        }
+
+        // Order matters: base prices first (so .price-full is correct), then the
+        // offer layered on top for the same cycle.
+        function loadAll() {
+          revertPrices();
+          fetchJson('/api/plans?cycle=' + cycle)
+            .then(function (plansData) {
+              if (plansData) renderPlans(plansData);
+              return fetchJson('/api/offer?cycle=' + cycle);
+            })
+            .then(function (offerData) {
+              if (offerData && offerData.active !== false) applyOffer(offerData);
+            })
+            .catch(function () {
+              // Non-critical enhancement - keep the pricing already in the markup.
+            });
+        }
+
+        document.querySelectorAll('#billingToggle .cycle-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            if (btn.dataset.cycle === cycle) return;
+            cycle = btn.dataset.cycle === 'yearly' ? 'yearly' : 'monthly';
+            document.querySelectorAll('#billingToggle .cycle-btn').forEach(function (b) {
+              b.classList.toggle('active', b === btn);
+            });
+            loadAll();
           });
+        });
+
+        loadAll();
+        Promise.all([fetchJson('/api/plans?cycle=monthly'), fetchJson('/api/plans?cycle=yearly')])
+          .then(function (results) { renderSaveChip(results[0], results[1]); })
+          .catch(function () {});
       })();
     </script>
   </body>
