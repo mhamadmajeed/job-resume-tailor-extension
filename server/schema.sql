@@ -1,8 +1,13 @@
+-- credits_used tracks the paid plans' per-period credit spend (see credit_costs).
+-- It resets to 0 wherever generations_used resets: on a 30-day period roll and on a
+-- paid checkout webhook. Free users never spend credits; they are governed by
+-- generations_used against plan_settings.generation_limit instead.
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT,
   plan TEXT NOT NULL DEFAULT 'free',
   generations_used INTEGER NOT NULL DEFAULT 0,
+  credits_used INTEGER NOT NULL DEFAULT 0,
   period_start TEXT NOT NULL,
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
@@ -171,13 +176,27 @@ CREATE INDEX IF NOT EXISTS idx_visitor_offers_visitor ON visitor_offers(visitor_
 -- are a separate, admin-set yearly price (usually cheaper than price_usd x 12), not a
 -- derived discount. The yearly Stripe price is minted lazily the first time an admin
 -- sets/changes price_usd_yearly - see createPlanPrice in stripe.js.
+-- credits_monthly is the paid plans' monthly credit pool (admin-editable): NULL for
+-- 'free' (the free plan is quota-based, not credit-based), 200 for 'pro', 500 for
+-- 'elite' by default. Monthly and yearly billing grant the same monthly pool.
+-- generation_limit still governs the FREE plan's tailored resumes per 30-day period.
 CREATE TABLE IF NOT EXISTS plan_settings (
   plan TEXT PRIMARY KEY,
   price_usd REAL NOT NULL DEFAULT 0,
   price_usd_yearly REAL,
   generation_limit INTEGER NOT NULL,
+  credits_monthly INTEGER,
   stripe_product_id TEXT,
   stripe_price_id TEXT,
   stripe_price_id_yearly TEXT,
   updated_at TEXT
+);
+
+-- Per-use credit prices for the paid plans (admin-editable). Every feature use
+-- deducts its row's credits from the user's monthly pool: the four generation
+-- intensities, AI refine (revise), and boost. There is intentionally NO row for
+-- check-match: it is always free for every plan and not configurable.
+CREATE TABLE IF NOT EXISTS credit_costs (
+  feature TEXT PRIMARY KEY,
+  credits INTEGER NOT NULL
 );

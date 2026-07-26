@@ -323,6 +323,12 @@
         font-size: 14px;
       }
 
+      .costs-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 10px;
+      }
+
       /* ---- Modals ---- */
 
       .modal-overlay {
@@ -653,7 +659,8 @@
             <p class="hint">
               Monthly and yearly prices are separate - yearly is usually cheaper than 12x monthly.
               Changing a price creates a new Stripe price for future checkouts; current subscribers
-              keep the price they signed up at. Quota changes apply to everyone right away.
+              keep the price they signed up at. Quota and credit changes apply to everyone right away.
+              The generations quota only applies to the free plan; paid plans run on monthly credits.
             </p>
           </div>
           <div class="table-wrap card">
@@ -664,6 +671,7 @@
                   <th>Monthly price ($)</th>
                   <th>Yearly price ($)</th>
                   <th>Generations / month</th>
+                  <th>Monthly credits</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -671,6 +679,40 @@
             </table>
           </div>
           <p id="plansNote" class="empty-note hidden"></p>
+
+          <div class="card form-card">
+            <h2>Feature costs</h2>
+            <p class="hint">Credits each feature costs per use on paid plans. Check match is always free.</p>
+            <div class="costs-grid">
+              <label class="field">
+                <span>Light</span>
+                <input id="costLight" class="input" type="number" min="1" step="1">
+              </label>
+              <label class="field">
+                <span>Medium</span>
+                <input id="costMedium" class="input" type="number" min="1" step="1">
+              </label>
+              <label class="field">
+                <span>Max</span>
+                <input id="costMax" class="input" type="number" min="1" step="1">
+              </label>
+              <label class="field">
+                <span>Ultra</span>
+                <input id="costUltra" class="input" type="number" min="1" step="1">
+              </label>
+              <label class="field">
+                <span>Refine with AI</span>
+                <input id="costRevise" class="input" type="number" min="1" step="1">
+              </label>
+              <label class="field">
+                <span>Boost</span>
+                <input id="costBoost" class="input" type="number" min="1" step="1">
+              </label>
+            </div>
+            <div>
+              <button id="saveCreditCosts" class="btn primary" type="button">Save costs</button>
+            </div>
+          </div>
         </section>
 
         <!-- ---- Admins tab ---- -->

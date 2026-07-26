@@ -83,6 +83,14 @@
         color: var(--accent-2);
       }
 
+      .costs-line {
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+        max-width: 640px;
+        margin: -12px auto 26px;
+      }
+
       /* ---- Discount offer bar + discounted pricing ---- */
 
       .hidden {
@@ -273,12 +281,13 @@
           <div class="section-head">
             <span class="eyebrow">Pricing</span>
             <h2>Start free. Upgrade when you need more.</h2>
-            <p>Every plan includes every feature - all four tailoring intensities, Boost, live match check with keyword gaps, and dashboard sync. Paid plans simply raise your monthly quota.</p>
+            <p>Free covers 5 tailored resumes a month at any intensity, plus unlimited match checks. Paid plans give you a monthly credit pool to spend on generating, refining, and boosting.</p>
           </div>
           <div class="billing-toggle" id="billingToggle" role="group" aria-label="Billing cycle">
             <button type="button" class="cycle-btn active" data-cycle="monthly">Monthly</button>
             <button type="button" class="cycle-btn" data-cycle="yearly">Yearly <span class="cycle-save" id="yearlySaveChip"></span></button>
           </div>
+          <p id="costsLine" class="costs-line">Light 1 - Medium 2 - Max 3 - Ultra 5 - Refine 1 - Boost 2 credits</p>
           <div class="pricing-grid">
             <div class="price-card card">
               <div class="price-card-head">
@@ -290,9 +299,9 @@
                 </div>
               </div>
               <ul class="price-list">
-                <li data-plan-quota="free">5 tailored resumes / 30 days</li>
+                <li data-plan-quota="free">5 tailored resumes / month</li>
                 <li>All four intensities, including Max &amp; Ultra</li>
-                <li>Boost + live match check with keyword gaps</li>
+                <li>Free match check with keyword gaps</li>
                 <li>Dashboard sync</li>
               </ul>
               <a class="btn ghost block" href="https://github.com/mhamadmajeed/job-resume-tailor-extension" target="_blank" rel="noopener">Add to Chrome - it's free</a>
@@ -310,9 +319,9 @@
                 </div>
               </div>
               <ul class="price-list">
-                <li data-plan-quota="pro">100 tailored resumes / 30 days</li>
-                <li data-plan-ratio="pro">Every feature in Free, 20x the volume</li>
-                <li>For a serious multi-application search</li>
+                <li data-plan-credits="pro">200 credits / month</li>
+                <li>AI refine chat + Boost included</li>
+                <li data-plan-ratio="pro">200 credits to spend your way</li>
               </ul>
               <p class="price-note">Upgrade in app - sign in and manage billing from your dashboard. No checkout here.</p>
             </div>
@@ -328,8 +337,8 @@
                 </div>
               </div>
               <ul class="price-list">
-                <li data-plan-quota="elite">300 tailored resumes / 30 days</li>
-                <li>Every feature, maximum volume</li>
+                <li data-plan-credits="elite">500 credits / month</li>
+                <li>AI refine chat + Boost included</li>
                 <li>Priority support</li>
               </ul>
               <p class="price-note">Upgrade in app - sign in and manage billing from your dashboard. No checkout here.</p>
@@ -439,20 +448,42 @@
             if (period) period.textContent = periodLabel();
           });
 
-          ['free', 'pro', 'elite'].forEach(function (plan) {
-            var quotaEl = document.querySelector('[data-plan-quota="' + plan + '"]');
+          var freeQuotaEl = document.querySelector('[data-plan-quota="free"]');
+          if (freeQuotaEl && plans.free && plans.free.limit) {
+            freeQuotaEl.textContent = plans.free.limit + ' tailored resumes / month';
+          }
+
+          // Paid plans are credit pools now. Prefer the new .credits field and
+          // tolerate the older .limit field from a stale or cached response.
+          ['pro', 'elite'].forEach(function (plan) {
+            var creditsEl = document.querySelector('[data-plan-credits="' + plan + '"]');
             var info = plans[plan];
-            if (quotaEl && info && info.limit) {
-              quotaEl.textContent = info.limit + ' tailored resumes / 30 days';
-            }
+            if (!creditsEl || !info) return;
+            var credits = info.credits != null ? info.credits : info.limit;
+            if (credits) creditsEl.textContent = credits + ' credits / month';
           });
 
-          // The hardcoded "20x" in the markup is the no-JS fallback; recompute
-          // it from the live limits so admin quota edits keep it honest.
+          // The old generations ratio no longer applies to paid plans; show
+          // the live Pro credit pool instead. Markup text is the no-JS fallback.
           var ratioEl = document.querySelector('[data-plan-ratio="pro"]');
-          if (ratioEl && plans.pro && plans.free && plans.pro.limit && plans.free.limit > 0) {
-            ratioEl.textContent = 'Every feature in Free, ' + Math.round(plans.pro.limit / plans.free.limit) + 'x the volume';
+          if (ratioEl && plans.pro) {
+            var proCredits = plans.pro.credits != null ? plans.pro.credits : plans.pro.limit;
+            if (proCredits) ratioEl.textContent = proCredits + ' credits to spend your way';
           }
+
+          renderCosts(data.costs);
+        }
+
+        // One-line per-use costs explainer under the billing toggle, rendered
+        // from the live credit_costs values so admin edits keep it honest.
+        function renderCosts(costs) {
+          var el = document.getElementById('costsLine');
+          if (!el || !costs) return;
+          var parts = [];
+          [['light', 'Light'], ['medium', 'Medium'], ['max', 'Max'], ['ultra', 'Ultra'], ['revise', 'Refine'], ['boost', 'Boost']].forEach(function (pair) {
+            if (costs[pair[0]] != null) parts.push(pair[1] + ' ' + costs[pair[0]]);
+          });
+          if (parts.length) el.textContent = parts.join(' - ') + ' credits';
         }
 
         // "Save N%" on the yearly toggle - derived from the monthly-cycle prices

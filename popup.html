@@ -49,19 +49,19 @@
         <div class="intensity" role="radiogroup" aria-label="How much should AI edit your resume?">
           <label class="intensity-option">
             <input type="radio" name="intensity" value="minimal">
-            <span class="intensity-card"><strong>Light</strong><small>Few edits</small></span>
+            <span class="intensity-card"><strong>Light<span class="intensity-cost"></span></strong><small>Few edits</small></span>
           </label>
           <label class="intensity-option">
             <input type="radio" name="intensity" value="balanced" checked>
-            <span class="intensity-card"><strong>Medium</strong><small>Balanced</small></span>
+            <span class="intensity-card"><strong>Medium<span class="intensity-cost"></span></strong><small>Balanced</small></span>
           </label>
           <label id="maxIntensityOption" class="intensity-option">
             <input type="radio" name="intensity" value="max">
-            <span class="intensity-card"><strong>Max</strong><small>Deep rewrite</small><span class="lock-badge hidden">Pro</span></span>
+            <span class="intensity-card"><strong>Max<span class="intensity-cost"></span></strong><small>Deep rewrite</small><span class="lock-badge hidden">Pro</span></span>
           </label>
           <label id="ultraIntensityOption" class="intensity-option">
             <input type="radio" name="intensity" value="ultra">
-            <span class="intensity-card"><strong>Ultra</strong><small>All-out</small><span class="lock-badge hidden">Elite</span></span>
+            <span class="intensity-card"><strong>Ultra<span class="intensity-cost"></span></strong><small>All-out</small><span class="lock-badge hidden">Elite</span></span>
           </label>
         </div>
         <div class="actions">
@@ -104,7 +104,7 @@
           <button id="downloadDocx" type="button" class="ghost" disabled>DOCX</button>
         </div>
 
-        <div class="chat-panel">
+        <div id="chatPanel" class="chat-panel">
           <p class="chat-title">Refine with AI</p>
           <div id="chatLog" class="chat-log"></div>
           <div class="chat-row">
@@ -113,7 +113,7 @@
           </div>
         </div>
 
-        <details class="editor">
+        <details id="editorBlock" class="editor">
           <summary>View &amp; edit resume text</summary>
           <textarea id="resumeDraft" rows="12" spellcheck="true" placeholder="Generated resume text"></textarea>
         </details>

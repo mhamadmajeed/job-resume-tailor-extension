@@ -334,6 +334,18 @@ button.small {
   color: var(--accent);
 }
 
+/* Per-use credit cost suffix on intensity labels (paid plans only) */
+.intensity-cost {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.intensity-cost:empty {
+  display: none;
+}
+
 /* ---- Locked intensities (plan gating - UX only, server enforces the rest) ---- */
 
 .intensity-card {

@@ -228,7 +228,16 @@ function renderAccount(account) {
   setPlanBadge(userPlanBadge, plan);
   setPlanBadge(planBadge, plan);
 
-  if (account.limit != null) {
+  // Paid plans spend a monthly credit pool, so their bar tracks credits.
+  // Free plans (or older payloads without a credits object) keep the
+  // generations bar unchanged.
+  const credits = account.credits;
+  if ((plan === 'pro' || plan === 'elite') && credits && credits.total != null) {
+    const creditsUsed = credits.used != null ? credits.used : credits.total - credits.remaining;
+    quotaText.textContent = `${credits.remaining} of ${credits.total} credits left this billing period`;
+    const pct = credits.total > 0 ? Math.min(100, Math.max(0, (creditsUsed / credits.total) * 100)) : 0;
+    quotaFill.style.width = `${pct}%`;
+  } else if (account.limit != null) {
     quotaText.textContent = `${account.remaining} of ${account.limit} tailored resumes left this month`;
     const used = account.generationsUsed != null ? account.generationsUsed : account.limit - account.remaining;
     const pct = account.limit > 0 ? Math.min(100, Math.max(0, (used / account.limit) * 100)) : 0;

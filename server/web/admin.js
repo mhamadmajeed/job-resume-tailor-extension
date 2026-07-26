@@ -32,6 +32,7 @@ let members = [];
 let posts = [];
 let discounts = [];
 let plans = [];
+let creditCosts = null;
 let admins = [];
 let editingPostId = null;
 let slugTouched = false;
@@ -237,6 +238,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
     if (btn.dataset.tab === 'blog' && !posts.length) loadPosts();
     if (btn.dataset.tab === 'discounts' && !discounts.length) loadDiscounts();
     if (btn.dataset.tab === 'plans' && !plans.length) loadPlans();
+    if (btn.dataset.tab === 'plans' && !creditCosts) loadCreditCosts();
     if (btn.dataset.tab === 'admins' && !admins.length) loadAdmins();
   });
 });
@@ -947,8 +949,10 @@ saveDiscountButton.addEventListener('click', async () => {
 });
 
 // ---- Plans tab ----
-// Each row is directly editable: price inputs (hidden for free) + quota input + Save.
-// Prices are whole dollars - Stripe checkout charges exactly what's stored here.
+// Each row is directly editable: price inputs (hidden for free) + Save.
+// The free row edits its generations quota; paid rows edit their monthly
+// credit pool instead. Prices are whole dollars - Stripe checkout charges
+// exactly what's stored here.
 
 async function loadPlans() {
   try {
@@ -1019,9 +1023,30 @@ function renderPlanRow(planRow) {
   quotaInput.min = '1';
   quotaInput.step = '1';
   quotaInput.style.maxWidth = '110px';
-  quotaInput.value = pick(planRow, 'generationLimit', 'generation_limit') ?? '';
-  quotaCell.appendChild(quotaInput);
+  if (isFree) {
+    quotaInput.value = pick(planRow, 'generationLimit', 'generation_limit') ?? '';
+    quotaCell.appendChild(quotaInput);
+  } else {
+    quotaCell.textContent = '-';
+    quotaCell.className = 'cell-muted';
+  }
   tr.appendChild(quotaCell);
+
+  const creditsCell = document.createElement('td');
+  const creditsInput = document.createElement('input');
+  creditsInput.className = 'input';
+  creditsInput.type = 'number';
+  creditsInput.min = '1';
+  creditsInput.step = '1';
+  creditsInput.style.maxWidth = '110px';
+  if (isFree) {
+    creditsCell.textContent = '-';
+    creditsCell.className = 'cell-muted';
+  } else {
+    creditsInput.value = pick(planRow, 'creditsMonthly', 'credits_monthly') ?? '';
+    creditsCell.appendChild(creditsInput);
+  }
+  tr.appendChild(creditsCell);
 
   const actionsCell = document.createElement('td');
   actionsCell.className = 'cell-actions';
@@ -1029,22 +1054,24 @@ function renderPlanRow(planRow) {
   saveBtn.type = 'button';
   saveBtn.className = 'btn primary small';
   saveBtn.textContent = 'Save';
-  saveBtn.addEventListener('click', () => savePlan(plan, { monthlyInput, yearlyInput, quotaInput, saveBtn, isFree }));
+  saveBtn.addEventListener('click', () => savePlan(plan, { monthlyInput, yearlyInput, quotaInput, creditsInput, saveBtn, isFree }));
   actionsCell.appendChild(saveBtn);
   tr.appendChild(actionsCell);
 
   return tr;
 }
 
-async function savePlan(plan, { monthlyInput, yearlyInput, quotaInput, saveBtn, isFree }) {
-  const generationLimit = Number(quotaInput.value);
-  if (!Number.isFinite(generationLimit) || generationLimit <= 0) {
-    showToast('Generations per month must be a positive number.');
-    return;
-  }
+async function savePlan(plan, { monthlyInput, yearlyInput, quotaInput, creditsInput, saveBtn, isFree }) {
+  const payload = {};
 
-  const payload = { generationLimit };
-  if (!isFree) {
+  if (isFree) {
+    const generationLimit = Number(quotaInput.value);
+    if (!Number.isFinite(generationLimit) || generationLimit <= 0) {
+      showToast('Generations per month must be a positive number.');
+      return;
+    }
+    payload.generationLimit = generationLimit;
+  } else {
     const priceUsd = Number(monthlyInput.value);
     if (!Number.isFinite(priceUsd) || priceUsd <= 0) {
       showToast('Monthly price must be a positive number.');
@@ -1060,6 +1087,12 @@ async function savePlan(plan, { monthlyInput, yearlyInput, quotaInput, saveBtn, 
       }
       payload.priceUsdYearly = priceUsdYearly;
     }
+    const creditsMonthly = Number(creditsInput.value);
+    if (!creditsInput.value.trim() || !Number.isInteger(creditsMonthly) || creditsMonthly <= 0) {
+      showToast('Monthly credits must be a positive whole number.');
+      return;
+    }
+    payload.creditsMonthly = creditsMonthly;
   }
 
   saveBtn.disabled = true;
@@ -1078,6 +1111,68 @@ async function savePlan(plan, { monthlyInput, yearlyInput, quotaInput, saveBtn, 
     saveBtn.textContent = 'Save';
   }
 }
+
+// ---- Plans tab: feature costs ----
+// Six per-use credit costs, one input each. Check-match has no row on the
+// server because it is always free, so it never appears here.
+
+const COST_FIELDS = [
+  ['light', '#costLight'],
+  ['medium', '#costMedium'],
+  ['max', '#costMax'],
+  ['ultra', '#costUltra'],
+  ['revise', '#costRevise'],
+  ['boost', '#costBoost']
+];
+
+const saveCreditCostsButton = document.querySelector('#saveCreditCosts');
+
+function fillCostInputs(costs) {
+  COST_FIELDS.forEach(([key, selector]) => {
+    const value = costs && costs[key] != null ? costs[key] : '';
+    document.querySelector(selector).value = value;
+  });
+}
+
+async function loadCreditCosts() {
+  try {
+    const data = await apiFetch('/admin/credit-costs');
+    creditCosts = data || {};
+    fillCostInputs(creditCosts);
+  } catch (err) {
+    showToast(err.message || 'Could not load feature costs.');
+  }
+}
+
+saveCreditCostsButton.addEventListener('click', async () => {
+  const payload = {};
+  for (const [key, selector] of COST_FIELDS) {
+    const raw = document.querySelector(selector).value.trim();
+    const value = Number(raw);
+    if (!raw || !Number.isInteger(value) || value <= 0) {
+      showToast('Every feature cost must be a positive whole number of credits.');
+      return;
+    }
+    payload[key] = value;
+  }
+
+  saveCreditCostsButton.disabled = true;
+  saveCreditCostsButton.textContent = 'Saving...';
+  try {
+    const data = await apiFetch('/admin/credit-costs', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    creditCosts = data || payload;
+    fillCostInputs(creditCosts);
+    showToast('Feature costs updated.');
+  } catch (err) {
+    showToast(err.message || 'Could not update feature costs.');
+  } finally {
+    saveCreditCostsButton.disabled = false;
+    saveCreditCostsButton.textContent = 'Save costs';
+  }
+});
 
 // ---- Admins tab ----
 
@@ -1204,7 +1299,10 @@ async function boot() {
     if (allowed.includes('members')) loadMembers();
     if (allowed.includes('blog')) loadPosts();
     if (allowed.includes('discounts')) loadDiscounts();
-    if (allowed.includes('plans')) loadPlans();
+    if (allowed.includes('plans')) {
+      loadPlans();
+      loadCreditCosts();
+    }
     if (allowed.includes('admins')) loadAdmins();
   } catch (err) {
     if (err.message && err.message.toLowerCase().includes('sign in')) {

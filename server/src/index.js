@@ -61,13 +61,15 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
         }
       }
       // Resetting the quota window is safe here: this event only fires after payment.
+      // Credits reset alongside it so a fresh subscription starts with a full pool.
       db.prepare(
-        `INSERT INTO users (id, email, plan, generations_used, period_start, stripe_customer_id, stripe_subscription_id, created_at)
-         VALUES (?, ?, ?, 0, ?, ?, ?, ?)
+        `INSERT INTO users (id, email, plan, generations_used, credits_used, period_start, stripe_customer_id, stripe_subscription_id, created_at)
+         VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            plan = excluded.plan,
            email = COALESCE(excluded.email, users.email),
            generations_used = 0,
+           credits_used = 0,
            period_start = excluded.period_start,
            stripe_customer_id = excluded.stripe_customer_id,
            stripe_subscription_id = excluded.stripe_subscription_id`
@@ -96,19 +98,48 @@ app.use(express.urlencoded({ extended: true }));
 const PERIOD_DAYS = 30;
 
 // Three tiers stored in users.plan: free / pro / elite, admin-editable via the
-// plan_settings table (price + monthly quota + the Stripe product/price backing it).
-// Env vars (FREE_GENERATION_LIMIT etc.) and hardcoded $19/$29 only matter as the
-// one-time seed in db.js - from here on the DB row is the single source of truth.
+// plan_settings table (price + free-plan quota + paid-plan monthly credits + the
+// Stripe product/price backing it). Env vars (FREE_GENERATION_LIMIT etc.) and
+// hardcoded $19/$29 only matter as the one-time seed in db.js - from here on the
+// DB row is the single source of truth.
 function getPlanSettings(plan) {
   const row = db.prepare('SELECT * FROM plan_settings WHERE plan = ?').get(plan);
   if (row) return row;
   // Should never happen post-seed, but keep the server usable if it does.
-  return { plan, price_usd: plan === 'free' ? 0 : 19, generation_limit: 5, stripe_product_id: null, stripe_price_id: null };
+  return {
+    plan,
+    price_usd: plan === 'free' ? 0 : 19,
+    generation_limit: 5,
+    credits_monthly: plan === 'free' ? null : 200,
+    stripe_product_id: null,
+    stripe_price_id: null
+  };
 }
 
 function planLimit(plan) {
   return getPlanSettings(plan).generation_limit;
 }
+
+// Monthly credit pool for paid plans (null on free - the free plan counts
+// generations, not credits). Monthly and yearly billing grant the same pool.
+function planCredits(plan) {
+  return getPlanSettings(plan).credits_monthly;
+}
+
+// Per-use credit prices, admin-editable via the credit_costs table. The literals
+// here are only a fallback if a seed row ever goes missing; the DB rows win.
+// Check-match has no row on purpose: it is always free and not configurable.
+function getCreditCosts() {
+  const costs = { light: 1, medium: 2, max: 3, ultra: 5, revise: 1, boost: 2 };
+  for (const row of db.prepare('SELECT feature, credits FROM credit_costs').all()) {
+    costs[row.feature] = row.credits;
+  }
+  return costs;
+}
+
+// The wire intensity values predate the credit model: minimal/balanced from the
+// popup map to the light/medium rows in credit_costs.
+const INTENSITY_COST_FEATURE = { minimal: 'light', balanced: 'medium', max: 'max', ultra: 'ultra' };
 
 // cycle is 'monthly' or 'yearly'. Yearly is admin-set (usually ~2 months free vs.
 // monthly x12) and stored in its own column since it's a genuinely different price,
@@ -136,42 +167,46 @@ async function resolveCheckoutPriceId(plan, cycle) {
   return priceId;
 }
 
-// intensity gates: 'max' requires pro+, 'ultra' requires elite. Returns a clear
-// upgrade message, or null if the plan is allowed to use this intensity.
-// Every feature is available on every plan - the only difference between tiers is
-// the monthly quota. No money talk until the free allowance is actually used up.
-function intensityGateError(_plan, _intensity) {
-  return null;
-}
+// Feature gating: every intensity is available on every plan - a free generation
+// spends one of the monthly slots no matter the intensity, and paid plans pay the
+// per-intensity credit price instead. Revise and boost are paid-only; each handler
+// checks the plan itself at the top, before any Claude call. The free plan still
+// hears no money talk until its allowance is actually used up.
 
-function boostGateError(_plan) {
-  return null;
-}
-
-// Rolls the 30-day usage window for every plan, resetting the counter when a new
+// Rolls the 30-day usage window for every plan, resetting both counters when a new
 // period starts.
 function refreshQuotaPeriod(user) {
   const daysElapsed = (Date.now() - new Date(user.period_start).getTime()) / (1000 * 60 * 60 * 24);
   if (daysElapsed < PERIOD_DAYS) return user;
 
   const period_start = nowIso();
-  db.prepare('UPDATE users SET generations_used = 0, period_start = ? WHERE id = ?').run(period_start, user.id);
-  return { ...user, generations_used: 0, period_start };
+  db.prepare('UPDATE users SET generations_used = 0, credits_used = 0, period_start = ? WHERE id = ?').run(period_start, user.id);
+  return { ...user, generations_used: 0, credits_used: 0, period_start };
 }
 
 function userSummary(user) {
+  const isPro = user.plan !== 'free';
   const limit = planLimit(user.plan);
+  const creditsTotal = planCredits(user.plan) ?? 0;
+  const creditsUsed = user.credits_used || 0;
   return {
     plan: user.plan,
     tier: user.plan,
-    isPro: user.plan !== 'free',
+    isPro,
     generationsUsed: user.generations_used,
     limit,
     remaining: Math.max(0, limit - user.generations_used),
+    credits: isPro
+      ? { used: creditsUsed, total: creditsTotal, remaining: Math.max(0, creditsTotal - creditsUsed) }
+      : null,
+    costs: getCreditCosts(),
     features: {
       maxIntensity: true,
       ultraIntensity: true,
-      boost: true
+      boost: isPro,
+      refine: isPro,
+      editor: isPro,
+      checkMatch: true
     }
   };
 }
@@ -180,27 +215,39 @@ function getOrCreateUser(deviceId) {
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(deviceId);
   if (existing) return refreshQuotaPeriod(existing);
 
-  const user = { id: deviceId, plan: 'free', generations_used: 0, period_start: nowIso(), created_at: nowIso(), status: 'active' };
+  const user = { id: deviceId, plan: 'free', generations_used: 0, credits_used: 0, period_start: nowIso(), created_at: nowIso(), status: 'active' };
   db.prepare(
     'INSERT INTO users (id, plan, generations_used, period_start, created_at) VALUES (?, ?, ?, ?, ?)'
   ).run(user.id, user.plan, user.generations_used, user.period_start, user.created_at);
   return user;
 }
 
+// Free plan only - paid plans go through creditGateError below. Every number and
+// price is read live from plan_settings so admin edits show up immediately.
 function quotaExceededError(user) {
   const limit = planLimit(user.plan);
-  if (user.plan === 'elite') {
-    return `You have used all ${limit} generations for this billing period.`;
-  }
-  if (user.plan === 'pro') {
-    const eliteLimit = planLimit('elite');
-    return `You have used all ${limit} generations for this billing period. Upgrade to Elite for ${eliteLimit} a month.`;
-  }
   const proPrice = planPrice('pro');
-  const proLimit = planLimit('pro');
+  const proCredits = planCredits('pro') ?? 0;
   const elitePrice = planPrice('elite');
-  const eliteLimit = planLimit('elite');
-  return `Your ${limit} free tailored resumes for this month are used. Subscribe to keep going - Pro ($${proPrice}/mo, ${proLimit}/month) or Elite ($${elitePrice}/mo, ${eliteLimit}/month).`;
+  const eliteCredits = planCredits('elite') ?? 0;
+  return `Your ${limit} free tailored resumes for this month are used. Subscribe to keep going - Pro ($${proPrice}/mo, ${proCredits} credits) or Elite ($${elitePrice}/mo, ${eliteCredits} credits).`;
+}
+
+// Paid plans: null when the user can cover the cost, otherwise the 402 message.
+// Two wordings: the pool is fully spent, or some credits remain but not enough
+// for this particular action. Pro users also get the Elite upgrade hint.
+function creditGateError(user, cost) {
+  const total = planCredits(user.plan) ?? 0;
+  const remaining = Math.max(0, total - (user.credits_used || 0));
+  if (remaining >= cost) return null;
+
+  const eliteHint = `Upgrade to Elite for ${planCredits('elite') ?? 0} credits a month.`;
+  if (remaining <= 0) {
+    const base = `You have used all ${total} credits for this billing period.`;
+    return user.plan === 'elite' ? base : `${base} ${eliteHint}`;
+  }
+  const base = `This needs ${cost} credits and you have ${remaining} left this period.`;
+  return user.plan === 'pro' ? `${base} ${eliteHint}` : base;
 }
 
 // Check-match and generate must agree on the "before" score, so check results are
@@ -518,9 +565,10 @@ app.get('/api/plans', (req, res) => {
     cycle,
     plans: {
       free: { price: 0, limit: planLimit('free') },
-      pro: { price: planPrice('pro', cycle), limit: planLimit('pro') },
-      elite: { price: planPrice('elite', cycle), limit: planLimit('elite') }
-    }
+      pro: { price: planPrice('pro', cycle), credits: planCredits('pro') },
+      elite: { price: planPrice('elite', cycle), credits: planCredits('elite') }
+    },
+    costs: getCreditCosts()
   });
 });
 
@@ -625,8 +673,19 @@ authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRo
   if (user.status === 'paused') {
     return res.status(403).json({ error: 'Your account is paused. Contact support.' });
   }
-  if (user.generations_used >= planLimit(user.plan)) {
+
+  const intensity = ['minimal', 'balanced', 'max', 'ultra'].includes(req.body.intensity) ? req.body.intensity : 'balanced';
+  const isPaid = user.plan !== 'free';
+  // Free: any intensity spends one of the flat monthly generations. Paid: each
+  // intensity has its own credit price.
+  const creditCost = isPaid ? getCreditCosts()[INTENSITY_COST_FEATURE[intensity]] : 0;
+
+  if (!isPaid && user.generations_used >= planLimit(user.plan)) {
     return res.status(402).json({ error: quotaExceededError(user), quota: userSummary(user) });
+  }
+  if (isPaid) {
+    const creditGate = creditGateError(user, creditCost);
+    if (creditGate) return res.status(402).json({ error: creditGate, quota: userSummary(user) });
   }
 
   const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(ownerId);
@@ -634,10 +693,6 @@ authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRo
 
   const job = { title: req.body.jobTitle || '', url: req.body.jobUrl || '', text: req.body.jobText || '' };
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
-
-  const intensity = ['minimal', 'balanced', 'max', 'ultra'].includes(req.body.intensity) ? req.body.intensity : 'balanced';
-  const intensityGate = intensityGateError(user.plan, intensity);
-  if (intensityGate) return res.status(403).json({ error: intensityGate, upgrade: true });
 
   // Single source of truth for the before-score: reuse the cached Check-match result
   // for this exact job, or run the same score-only pass now. The tailoring call is
@@ -659,8 +714,15 @@ authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRo
     'INSERT INTO generations (id, user_id, job_title, job_url, job_text, current_text, match_before, match_after, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(generationId, ownerId, job.title, job.url, job.text.slice(0, 20000), result.text, matchBefore, matchAfter, timestamp, timestamp);
 
-  db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(ownerId);
-  const updatedUser = { ...user, generations_used: user.generations_used + 1 };
+  // Deduct only after the Claude call succeeded. generations_used still counts
+  // every generation on every plan for stats; credits only move for paid plans.
+  db.prepare('UPDATE users SET generations_used = generations_used + 1, credits_used = credits_used + ? WHERE id = ?')
+    .run(creditCost, ownerId);
+  const updatedUser = {
+    ...user,
+    generations_used: user.generations_used + 1,
+    credits_used: (user.credits_used || 0) + creditCost
+  };
 
   res.json({
     generationId,
@@ -702,6 +764,18 @@ authed.post('/revise', requireAccount, rateLimit('revise', 40, 200), asyncRoute(
   if (user.status === 'paused') {
     return res.status(403).json({ error: 'Your account is paused. Contact support.' });
   }
+  // Paid-only feature: reject free plans up front, before any Claude spend.
+  if (user.plan === 'free') {
+    return res.status(402).json({
+      error: 'Refining with AI is part of the paid plans. Subscribe to unlock it.',
+      code: 'UPGRADE_REQUIRED',
+      quota: userSummary(user)
+    });
+  }
+  const reviseCost = getCreditCosts().revise;
+  const creditGate = creditGateError(user, reviseCost);
+  if (creditGate) return res.status(402).json({ error: creditGate, quota: userSummary(user) });
+
   const generationId = String(req.body.generationId || '');
   const instruction = String(req.body.instruction || '').trim();
   if (!instruction) return res.status(400).json({ error: 'instruction is required.' });
@@ -719,10 +793,15 @@ authed.post('/revise', requireAccount, rateLimit('revise', 40, 200), asyncRoute(
   db.prepare('INSERT INTO revisions (id, generation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(uuid(), generationId, 'assistant', result.summary, timestamp);
 
+  // Deduct only after the Claude call succeeded.
+  db.prepare('UPDATE users SET credits_used = credits_used + ? WHERE id = ?').run(reviseCost, ownerId);
+  const updatedUser = { ...user, credits_used: (user.credits_used || 0) + reviseCost };
+
   res.json({
     text: result.text,
     summary: result.summary,
-    match: { before: generation.match_before, after: result.matchAfter ?? generation.match_after }
+    match: { before: generation.match_before, after: result.matchAfter ?? generation.match_after },
+    quota: userSummary(updatedUser)
   });
 }));
 
@@ -732,11 +811,18 @@ authed.post('/boost', requireAccount, rateLimit('boost', 30, 120), asyncRoute(as
   if (user.status === 'paused') {
     return res.status(403).json({ error: 'Your account is paused. Contact support.' });
   }
-  const boostGate = boostGateError(user.plan);
-  if (boostGate) return res.status(403).json({ error: boostGate, upgrade: true });
-  if (user.generations_used >= planLimit(user.plan)) {
-    return res.status(402).json({ error: quotaExceededError(user), quota: userSummary(user) });
+  // Paid-only feature: reject free plans up front, before any Claude spend.
+  if (user.plan === 'free') {
+    return res.status(402).json({
+      error: 'Boost is part of the paid plans. Subscribe to unlock it.',
+      code: 'UPGRADE_REQUIRED',
+      quota: userSummary(user)
+    });
   }
+  const boostCost = getCreditCosts().boost;
+  const creditGate = creditGateError(user, boostCost);
+  if (creditGate) return res.status(402).json({ error: creditGate, quota: userSummary(user) });
+
   const generationId = String(req.body.generationId || '');
 
   const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, ownerId);
@@ -753,8 +839,10 @@ authed.post('/boost', requireAccount, rateLimit('boost', 30, 120), asyncRoute(as
   db.prepare('INSERT INTO revisions (id, generation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(uuid(), generationId, 'assistant', result.summary, timestamp);
 
-  db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(ownerId);
-  const updatedUser = { ...user, generations_used: user.generations_used + 1 };
+  // Deduct only after the Claude call succeeded. A boost is not a generation, so
+  // generations_used stays put; only credits move.
+  db.prepare('UPDATE users SET credits_used = credits_used + ? WHERE id = ?').run(boostCost, ownerId);
+  const updatedUser = { ...user, credits_used: (user.credits_used || 0) + boostCost };
 
   res.json({
     text: result.text,

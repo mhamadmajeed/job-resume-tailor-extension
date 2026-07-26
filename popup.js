@@ -82,6 +82,8 @@ function watermarkLineForPlan() {
 const chatLog = document.querySelector('#chatLog');
 const chatInput = document.querySelector('#chatInput');
 const chatSend = document.querySelector('#chatSend');
+const chatPanel = document.querySelector('#chatPanel');
+const editorBlock = document.querySelector('#editorBlock');
 
 let currentResumeText = '';
 let currentGeneratedResume = null;
@@ -217,18 +219,22 @@ function renderQuota() {
   }
   const isPro = currentQuota.isPro;
   accountState.textContent = isPro ? 'Pro plan' : 'Free plan';
-  if (currentQuota.limit != null) {
+  if (isPro && currentQuota.credits) {
+    quotaState.textContent = `${currentQuota.credits.remaining} credits`;
+  } else if (currentQuota.limit != null) {
     quotaState.textContent = `${currentQuota.remaining} of ${currentQuota.limit} left this month`;
   } else {
     quotaState.textContent = '';
   }
 
   const upsellText = document.querySelector('#upsellText');
-  if (upsellText && currentQuota.limit != null) {
+  if (upsellText && !isPro && currentQuota.limit != null) {
     upsellText.textContent = `Your ${currentQuota.limit} free tailored resumes for this month are used. Subscribe to keep going.`;
   }
 
   applyPlanGating();
+  applyFeatureGates();
+  renderIntensityCosts();
   maybeShowUpsell();
 }
 
@@ -248,6 +254,41 @@ function applyPlanGating() {
   boostLockedByPlan = false;
   boostMatch.title = '';
   boostMatch.disabled = isBusyState || !currentGeneratedResume;
+}
+
+// Feature gates come from the server (userSummary.features). When a feature is off
+// for the plan, its UI disappears entirely - no teaser, no upgrade copy - because
+// money is never mentioned before the free quota runs out. Only the specific
+// sub-elements are toggled here; #resultPanel visibility stays under its own logic.
+// A missing features object (older server response) leaves everything visible.
+function applyFeatureGates() {
+  const features = currentQuota?.features || null;
+  const canEdit = !features || features.editor !== false;
+  const canRefine = !features || features.refine !== false;
+  const canBoost = !features || features.boost !== false;
+
+  if (editorBlock) editorBlock.classList.toggle('hidden', !canEdit);
+  if (chatPanel) chatPanel.classList.toggle('hidden', !canRefine);
+  boostMatch.classList.toggle('hidden', !canBoost);
+  boostLockedByPlan = !canBoost;
+  boostMatch.disabled = isBusyState || !currentGeneratedResume || boostLockedByPlan;
+}
+
+// The intensity radio values predate the credit system, so map them to the keys
+// the server uses in userSummary.costs.
+const INTENSITY_COST_KEYS = { minimal: 'light', balanced: 'medium', max: 'max', ultra: 'ultra' };
+
+// Paid plans see the live per-use credit cost on each intensity card, e.g.
+// "Ultra - 5 cr". Free plans see plain labels with no credit talk at all.
+function renderIntensityCosts() {
+  const costs = currentQuota?.isPro ? currentQuota?.costs : null;
+  document.querySelectorAll('.intensity-option').forEach((optionEl) => {
+    const input = optionEl.querySelector('input');
+    const costEl = optionEl.querySelector('.intensity-cost');
+    if (!input || !costEl) return;
+    const cost = costs ? costs[INTENSITY_COST_KEYS[input.value]] : null;
+    costEl.textContent = cost != null ? ` - ${cost} cr` : '';
+  });
 }
 
 // Never mention money until the free quota is actually used up.
@@ -319,9 +360,13 @@ async function restoreServerState() {
     chatInput.disabled = false;
     chatSend.disabled = false;
     jobState.textContent = state.generation.jobTitle || 'Your last tailored resume';
-    generatedState.textContent = 'Your last tailored resume is ready. Refine it or download again.';
+    generatedState.textContent = currentQuota?.features?.refine === false
+      ? 'Your last tailored resume is ready. Download it again anytime.'
+      : 'Your last tailored resume is ready. Refine it or download again.';
     maybeShowUpsell();
   }
+
+  applyFeatureGates();
 }
 
 function stopPolling() {
@@ -1162,7 +1207,8 @@ analyzeJob.addEventListener('click', async () => {
     const matchNote = currentMatch.before != null && currentMatch.after != null
       ? ` Match went from ${currentMatch.before}% to ${currentMatch.after}%.`
       : '';
-    generatedState.textContent = `PDF saved to your Downloads.${matchNote} Refine below and it re-downloads.`;
+    const refineNote = currentQuota?.features?.refine === false ? '' : ' Refine below and it re-downloads.';
+    generatedState.textContent = `PDF saved to your Downloads.${matchNote}${refineNote}`;
   } catch (error) {
     progressHide(0);
     showError(jobState, error.message || 'Unable to tailor this page');
@@ -1249,6 +1295,10 @@ async function sendChatRevision() {
     currentGeneratedResume.text = revisedBody;
     resumeDraft.value = revisedBody;
     updateDownloadButtons();
+    if (result.quota) {
+      currentQuota = result.quota;
+      renderQuota();
+    }
     maybeShowUpsell();
 
     const previousAfter = currentMatch.after;
@@ -1266,6 +1316,7 @@ async function sendChatRevision() {
     appendChatMessage('assistant', `${summaryText} Updated PDF saved to your Downloads.`);
   } catch (error) {
     appendChatMessage('assistant', error.message || 'Could not apply that change.');
+    refreshAccount().catch(() => {});
   } finally {
     setBusy(false);
   }

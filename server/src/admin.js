@@ -430,6 +430,7 @@ function mapPlan(row) {
     priceUsd: row.price_usd,
     priceUsdYearly: row.price_usd_yearly,
     generationLimit: row.generation_limit,
+    creditsMonthly: row.credits_monthly,
     stripeProductId: row.stripe_product_id,
     stripePriceId: row.stripe_price_id,
     stripePriceIdYearly: row.stripe_price_id_yearly
@@ -449,9 +450,23 @@ adminRouter.put('/plans/:plan', requireRole('owner'), asyncRoute(async (req, res
   const existing = db.prepare('SELECT * FROM plan_settings WHERE plan = ?').get(plan);
   if (!existing) return res.status(404).json({ error: 'Unknown plan.' });
 
-  const generationLimit = Number(req.body?.generationLimit);
-  if (!Number.isFinite(generationLimit) || generationLimit <= 0) {
-    return res.status(400).json({ error: 'generationLimit must be a positive number.' });
+  // Free keeps its generation quota editable; paid plans edit their monthly credit
+  // pool instead. Whichever field a plan does not edit keeps its stored value.
+  let generationLimit = existing.generation_limit;
+  let creditsMonthly = existing.credits_monthly;
+
+  if (plan === 'free') {
+    const nextLimit = Number(req.body?.generationLimit);
+    if (!Number.isFinite(nextLimit) || nextLimit <= 0) {
+      return res.status(400).json({ error: 'generationLimit must be a positive number.' });
+    }
+    generationLimit = nextLimit;
+  } else {
+    const nextCredits = Number(req.body?.creditsMonthly);
+    if (!Number.isInteger(nextCredits) || nextCredits <= 0) {
+      return res.status(400).json({ error: 'creditsMonthly must be a positive number.' });
+    }
+    creditsMonthly = nextCredits;
   }
 
   let priceUsd = existing.price_usd;
@@ -485,12 +500,49 @@ adminRouter.put('/plans/:plan', requireRole('owner'), asyncRoute(async (req, res
 
   db.prepare(
     `UPDATE plan_settings
-     SET price_usd = ?, price_usd_yearly = ?, generation_limit = ?, stripe_price_id = ?, stripe_price_id_yearly = ?, updated_at = ?
+     SET price_usd = ?, price_usd_yearly = ?, generation_limit = ?, credits_monthly = ?, stripe_price_id = ?, stripe_price_id_yearly = ?, updated_at = ?
      WHERE plan = ?`
-  ).run(priceUsd, priceUsdYearly, generationLimit, stripePriceId, stripePriceIdYearly, nowIso(), plan);
+  ).run(priceUsd, priceUsdYearly, generationLimit, creditsMonthly, stripePriceId, stripePriceIdYearly, nowIso(), plan);
 
   res.json(mapPlan(db.prepare('SELECT * FROM plan_settings WHERE plan = ?').get(plan)));
 }));
+
+// ---- Credit costs (per-feature credit pricing for paid plans, owner-only) ----
+
+// check-match is deliberately absent: it is always free and not configurable.
+const CREDIT_FEATURES = ['light', 'medium', 'max', 'ultra', 'revise', 'boost'];
+
+function creditCostsPayload() {
+  const costs = {};
+  for (const row of db.prepare('SELECT feature, credits FROM credit_costs').all()) {
+    costs[row.feature] = row.credits;
+  }
+  return costs;
+}
+
+adminRouter.get('/credit-costs', requireRole('owner'), (req, res) => {
+  res.json(creditCostsPayload());
+});
+
+adminRouter.put('/credit-costs', requireRole('owner'), (req, res) => {
+  // Validate all six before writing anything so a bad value never leaves the
+  // table half-updated.
+  const next = {};
+  for (const feature of CREDIT_FEATURES) {
+    const credits = Number(req.body?.[feature]);
+    if (!Number.isInteger(credits) || credits <= 0) {
+      return res.status(400).json({ error: `${feature} must be a positive integer.` });
+    }
+    next[feature] = credits;
+  }
+
+  const update = db.prepare('UPDATE credit_costs SET credits = ? WHERE feature = ?');
+  for (const feature of CREDIT_FEATURES) {
+    update.run(next[feature], feature);
+  }
+
+  res.json(creditCostsPayload());
+});
 
 adminRouter.get('/admins', requireRole('owner'), (req, res) => {
   const rows = db.prepare('SELECT * FROM admins ORDER BY created_at DESC').all();

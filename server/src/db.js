@@ -41,7 +41,9 @@ for (const statement of [
   'ALTER TABLE discounts ADD COLUMN amount_off REAL',
   'ALTER TABLE plan_settings ADD COLUMN price_usd_yearly REAL',
   'ALTER TABLE plan_settings ADD COLUMN stripe_price_id_yearly TEXT',
-  'ALTER TABLE discounts ADD COLUMN stripe_coupon_id_yearly TEXT'
+  'ALTER TABLE discounts ADD COLUMN stripe_coupon_id_yearly TEXT',
+  'ALTER TABLE users ADD COLUMN credits_used INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE plan_settings ADD COLUMN credits_monthly INTEGER'
 ]) {
   try {
     db.exec(statement);
@@ -58,15 +60,42 @@ const now = new Date().toISOString();
 // price_usd_yearly seeds at ~2 months free vs. monthly x12 (a common, easy-to-explain
 // yearly discount); stripe_price_id_yearly starts null and is minted on first admin save
 // in the Plans tab (a live Stripe API call, which this seed step can't make).
+// credits_monthly is the paid plans' monthly credit pool (null for free, which stays
+// quota-based via generation_limit).
 const PLAN_SEEDS = [
-  { plan: 'free', price_usd: 0, price_usd_yearly: 0, generation_limit: 5, stripe_product_id: null, stripe_price_id: null, stripe_price_id_yearly: null },
-  { plan: 'pro', price_usd: 19, price_usd_yearly: 190, generation_limit: 100, stripe_product_id: 'prod_UxC778S14ApA5D', stripe_price_id: 'price_1TxHjeDiLpEG7BMio9JS9k8Y', stripe_price_id_yearly: null },
-  { plan: 'elite', price_usd: 29, price_usd_yearly: 290, generation_limit: 300, stripe_product_id: 'prod_UxC8XhbCXSP6JT', stripe_price_id: 'price_1TxHkeDiLpEG7BMi51A6xYFC', stripe_price_id_yearly: null }
+  { plan: 'free', price_usd: 0, price_usd_yearly: 0, generation_limit: 5, credits_monthly: null, stripe_product_id: null, stripe_price_id: null, stripe_price_id_yearly: null },
+  { plan: 'pro', price_usd: 19, price_usd_yearly: 190, generation_limit: 100, credits_monthly: 200, stripe_product_id: 'prod_UxC778S14ApA5D', stripe_price_id: 'price_1TxHjeDiLpEG7BMio9JS9k8Y', stripe_price_id_yearly: null },
+  { plan: 'elite', price_usd: 29, price_usd_yearly: 290, generation_limit: 300, credits_monthly: 500, stripe_product_id: 'prod_UxC8XhbCXSP6JT', stripe_price_id: 'price_1TxHkeDiLpEG7BMi51A6xYFC', stripe_price_id_yearly: null }
 ];
 const seedPlan = db.prepare(
-  `INSERT INTO plan_settings (plan, price_usd, price_usd_yearly, generation_limit, stripe_product_id, stripe_price_id, stripe_price_id_yearly, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(plan) DO NOTHING`
+  `INSERT INTO plan_settings (plan, price_usd, price_usd_yearly, generation_limit, credits_monthly, stripe_product_id, stripe_price_id, stripe_price_id_yearly, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(plan) DO NOTHING`
 );
 for (const seed of PLAN_SEEDS) {
-  seedPlan.run(seed.plan, seed.price_usd, seed.price_usd_yearly, seed.generation_limit, seed.stripe_product_id, seed.stripe_price_id, seed.stripe_price_id_yearly, now);
+  seedPlan.run(seed.plan, seed.price_usd, seed.price_usd_yearly, seed.generation_limit, seed.credits_monthly, seed.stripe_product_id, seed.stripe_price_id, seed.stripe_price_id_yearly, now);
+}
+
+// One-time backfill for databases seeded before credits_monthly existed: the plan
+// rows already exist there, so the ON CONFLICT seed above never fills the column in.
+db.exec(`
+  UPDATE plan_settings SET credits_monthly = 200 WHERE plan = 'pro' AND credits_monthly IS NULL;
+  UPDATE plan_settings SET credits_monthly = 500 WHERE plan = 'elite' AND credits_monthly IS NULL;
+`);
+
+// Seed the per-use credit prices for paid-plan features. Admin-editable afterwards
+// (PUT /admin/credit-costs), so this seed never overwrites an existing row.
+// check-match has no row on purpose: it is always free and not configurable.
+const COST_SEEDS = [
+  ['light', 1],
+  ['medium', 2],
+  ['max', 3],
+  ['ultra', 5],
+  ['revise', 1],
+  ['boost', 2]
+];
+const seedCost = db.prepare(
+  'INSERT INTO credit_costs (feature, credits) VALUES (?, ?) ON CONFLICT(feature) DO NOTHING'
+);
+for (const [feature, credits] of COST_SEEDS) {
+  seedCost.run(feature, credits);
 }
