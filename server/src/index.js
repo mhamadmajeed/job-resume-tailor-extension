@@ -229,7 +229,9 @@ function userSummary(user) {
       boost: isPro,
       refine: isPro,
       editor: isPro,
-      checkMatch: true
+      checkMatch: true,
+      atsMatch: user.plan === 'elite',
+      recruiterMatch: user.plan === 'elite'
     }
   };
 }
@@ -731,6 +733,10 @@ authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRo
   }
 
   const intensity = ['minimal', 'balanced', 'max', 'ultra'].includes(req.body.intensity) ? req.body.intensity : 'balanced';
+  // Elite-only targeting modifiers - free extras on a normal generation, so they
+  // never touch the credit math below.
+  const atsMatch = req.body.atsMatch === true;
+  const recruiterMatch = req.body.recruiterMatch === true;
   const isPaid = user.plan !== 'free';
   // Free: any intensity spends one of the flat monthly generations. Paid: each
   // intensity has its own credit price.
@@ -742,6 +748,16 @@ authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRo
   if (isPaid) {
     const creditGate = creditGateError(user, creditCost);
     if (creditGate) return res.status(402).json({ error: creditGate, quota: userSummary(user) });
+  }
+
+  // Server-side gate for the targeting checkboxes: the popup hides or disables them
+  // below Elite, but the request body is the enforcer's input, not the UI.
+  if ((atsMatch || recruiterMatch) && user.plan !== 'elite') {
+    return res.status(402).json({
+      error: 'ATS Match and Human recruiter match are part of the Elite plan.',
+      code: 'UPGRADE_REQUIRED',
+      quota: userSummary(user)
+    });
   }
 
   const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(ownerId);
@@ -760,7 +776,7 @@ authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRo
     saveMatchCheck(ownerId, job.text, anchoredBefore);
   }
 
-  const result = await tailorResume(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY, intensity, anchoredBefore);
+  const result = await tailorResume(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY, intensity, anchoredBefore, atsMatch, recruiterMatch);
   const matchBefore = anchoredBefore ?? result.matchBefore;
   const matchAfter = result.matchAfter;
 

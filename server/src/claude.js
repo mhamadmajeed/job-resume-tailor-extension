@@ -153,13 +153,38 @@ const INTENSITY_GUIDANCE = {
   ].join(' ')
 };
 
-function buildTailoringSystemPrompt(intensity, anchoredBefore) {
+// Elite-only targeting modifiers. Each block is appended to the tailoring prompt
+// only when its flag is on, so with both flags off the prompt is unchanged.
+const ATS_TARGETING = [
+  'ATS Match is ON: optimize the resume to pass applicant tracking system screening.',
+  'Use the job posting\'s exact keyword phrasing wherever it truthfully describes the candidate\'s experience.',
+  'Use standard section headings: Summary, Experience, Skills, Education.',
+  'Spell out each acronym once with the abbreviation alongside it.',
+  'Keep the layout plain single-column text with no tables or graphics.',
+  'Quantify bullets with concrete numbers wherever the original resume supports them.'
+].join(' ');
+
+const RECRUITER_TARGETING = [
+  'Human recruiter match is ON: optimize the resume for a human recruiter\'s quick skim.',
+  'Open with a sharp 2-3 line summary targeted at this specific role.',
+  'Make bullets achievement-first, leading with impact and numbers.',
+  'Use strong active verbs and avoid keyword stuffing.',
+  'Order content so it scans well, with the most relevant experience emphasized.'
+].join(' ');
+
+const DUAL_TARGETING = 'Both targeting modes are ON: balance them - keep the job posting\'s keywords present but weave them into readable, achievement-first bullets.';
+
+function buildTailoringSystemPrompt(intensity, anchoredBefore, atsMatch = false, recruiterMatch = false) {
   const anchor = anchoredBefore != null
     ? `The original resume's match score has already been measured as ${anchoredBefore}% under this exact rubric. Set match_before to exactly ${anchoredBefore}. Score match_after with the same rubric, treating ${anchoredBefore}% as the honest starting point.`
     : '';
   const structureRule = intensity === 'ultra'
     ? 'You may restructure freely: change section order, headings, and bullet organization to whatever presents the candidate best for this job. Keep every real job, employer, and date.'
     : 'Preserve the candidate resume structure: same section order, same major headings, same jobs, same dates, and similar bullet/list organization.';
+  const targeting = [];
+  if (atsMatch) targeting.push(ATS_TARGETING);
+  if (recruiterMatch) targeting.push(RECRUITER_TARGETING);
+  if (atsMatch && recruiterMatch) targeting.push(DUAL_TARGETING);
   return [
     'You are an expert resume strategist and ATS-aware editor.',
     INTENSITY_GUIDANCE[intensity] || INTENSITY_GUIDANCE.balanced,
@@ -174,6 +199,7 @@ function buildTailoringSystemPrompt(intensity, anchoredBefore) {
       : 'Make conservative edits only where the original resume provides support. Do not invent employers, dates, credentials, tools, metrics, certifications, education, or responsibilities.',
     'Update the resume across all relevant parts, including Summary/Profile, Skills, and relevant experience bullets when supported.',
     'Do not add generic notes or explanation sections to the resume.',
+    ...targeting,
     OUTPUT_HYGIENE,
     MATCH_RUBRIC,
     'Call the submit_resume tool with the result. Do not respond with plain text.'
@@ -263,8 +289,8 @@ function clampScore(value) {
   return Math.max(0, Math.min(100, Math.round(num)));
 }
 
-export async function tailorResume(resume, job, apiKey, intensity = 'balanced', anchoredBefore = null) {
-  const data = await callClaudeWithRetry(buildTailoringSystemPrompt(intensity, anchoredBefore), buildTailoringUserText(resume, job), apiKey);
+export async function tailorResume(resume, job, apiKey, intensity = 'balanced', anchoredBefore = null, atsMatch = false, recruiterMatch = false) {
+  const data = await callClaudeWithRetry(buildTailoringSystemPrompt(intensity, anchoredBefore, atsMatch, recruiterMatch), buildTailoringUserText(resume, job), apiKey);
   const result = extractToolInput(data);
   if (!result.resume_text || typeof result.resume_text !== 'string') {
     throw new Error('Claude did not return resume_text.');

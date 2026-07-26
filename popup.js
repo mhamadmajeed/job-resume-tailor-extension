@@ -30,6 +30,9 @@ const matchedChips = document.querySelector('#matchedChips');
 const missingChips = document.querySelector('#missingChips');
 const maxIntensityOption = document.querySelector('#maxIntensityOption');
 const ultraIntensityOption = document.querySelector('#ultraIntensityOption');
+const targetingRow = document.querySelector('#targetingRow');
+const atsMatchBox = document.querySelector('#atsMatch');
+const recruiterMatchBox = document.querySelector('#recruiterMatch');
 const shell = document.querySelector('.shell');
 const signinPanel = document.querySelector('#signinPanel');
 const signinButton = document.querySelector('#signinButton');
@@ -306,6 +309,25 @@ function applyFeatureGates() {
   boostMatch.classList.toggle('hidden', !canBoost);
   boostLockedByPlan = !canBoost;
   boostMatch.disabled = isBusyState || !currentGeneratedResume || boostLockedByPlan;
+
+  // ATS / recruiter targeting is an Elite modifier. Free and unknown plans never
+  // see the row at all, Pro sees it locked behind an Elite badge, and Elite gets
+  // live checkboxes. Locked or hidden boxes always reset to unchecked so a stale
+  // check can never ride along in a generate request.
+  const plan = String(currentQuota?.plan || currentQuota?.tier || '').toLowerCase();
+  const isElitePlan = plan === 'elite';
+  const isPaidPlan = isElitePlan || plan === 'pro' || Boolean(currentQuota?.isPro);
+  if (targetingRow) {
+    targetingRow.classList.toggle('hidden', !isPaidPlan);
+    [atsMatchBox, recruiterMatchBox].forEach((box) => {
+      if (!box) return;
+      box.disabled = !isElitePlan;
+      if (!isElitePlan) box.checked = false;
+    });
+    targetingRow.querySelectorAll('.lock-badge').forEach((badge) => {
+      badge.classList.toggle('hidden', isElitePlan);
+    });
+  }
 }
 
 // The intensity radio values predate the credit system, so map them to the keys
@@ -1224,9 +1246,17 @@ analyzeJob.addEventListener('click', async () => {
     progressCrawlTo(82);
 
     const intensity = document.querySelector('input[name="intensity"]:checked')?.value || 'balanced';
+    // Send the real checkbox states; the server rejects them for non-Elite plans anyway.
     const result = await apiFetch('/api/generate', {
       method: 'POST',
-      body: JSON.stringify({ jobTitle: job.title, jobUrl: job.url, jobText: job.text, intensity })
+      body: JSON.stringify({
+        jobTitle: job.title,
+        jobUrl: job.url,
+        jobText: job.text,
+        intensity,
+        atsMatch: Boolean(atsMatchBox?.checked),
+        recruiterMatch: Boolean(recruiterMatchBox?.checked)
+      })
     });
 
     const filename = buildOutputFilename(job.title || extractJobTitle(job.text, job.title));
