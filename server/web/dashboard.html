@@ -48,13 +48,13 @@
       }
 
       .plan-badge.pro {
-        background: var(--accent);
-        color: #fff;
+        background: var(--gradient);
+        color: var(--on-gradient);
       }
 
       .plan-badge.elite {
-        background: #6b3fa0;
-        color: #fff;
+        background: var(--gradient-rev);
+        color: var(--on-gradient);
       }
 
       /* ---- Notification bell ---- */
@@ -78,7 +78,7 @@
       }
 
       .notif-bell-button:hover {
-        background: var(--bg);
+        background: rgba(255, 255, 255, 0.07);
         color: var(--ink);
       }
 
@@ -90,7 +90,7 @@
         height: 16px;
         padding: 0 4px;
         border-radius: 999px;
-        background: #c0392b;
+        background: #dc2626;
         color: #fff;
         font-size: 10px;
         font-weight: 750;
@@ -154,7 +154,7 @@
       }
 
       .notif-item.unread:hover {
-        background: #d9ece8;
+        background: rgba(124, 92, 255, 0.24);
       }
 
       .notif-item-title {
@@ -263,7 +263,7 @@
       .quota-fill {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, var(--accent), #2b8f7f);
+        background: var(--gradient-h);
         border-radius: 999px;
         transition: width 0.3s ease;
       }
@@ -278,7 +278,7 @@
 
       .upgrade-error {
         font-size: 12.5px;
-        color: #a33b2e;
+        color: var(--danger-ink);
         margin: 0;
       }
 
@@ -332,7 +332,7 @@
       }
 
       .resume-card:hover {
-        border-color: #c8d4d1;
+        border-color: rgba(255, 255, 255, 0.22);
       }
 
       .resume-card:active {
@@ -369,7 +369,7 @@
       .modal-overlay {
         position: fixed;
         inset: 0;
-        background: rgba(23, 33, 31, 0.55);
+        background: rgba(3, 5, 12, 0.72);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -429,7 +429,7 @@
       .resume-text {
         flex: 1;
         overflow: auto;
-        background: #fbfdfc;
+        background: var(--bg-soft);
         border: 1px solid var(--line);
         border-radius: 10px;
         padding: 16px;
