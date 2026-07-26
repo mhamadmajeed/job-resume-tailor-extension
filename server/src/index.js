@@ -2,9 +2,11 @@ import 'dotenv/config';
 import { createHash } from 'node:crypto';
 import express from 'express';
 import { db } from './db.js';
-import { uuid, nowIso, deviceAuth, asyncRoute } from './util.js';
+import { uuid, nowIso, deviceAuth, accountAuth, signToken, asyncRoute } from './util.js';
 import { tailorResume, reviseResume, boostResume, scoreMatch } from './claude.js';
 import { createCheckoutSession, verifyStripeWebhook } from './stripe.js';
+import { exchangeCodeForTokens, verifyGoogleIdToken } from './google.js';
+import { errorPage, deviceConnectedPage } from './pages.js';
 
 const app = express();
 const PORT = process.env.PORT || 8787;
@@ -31,9 +33,11 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
   const object = event.data?.object;
 
   if (event.type === 'checkout.session.completed') {
-    const deviceId = object.metadata?.device_id;
+    // metadata.device_id actually holds whatever "owner id" the checkout was created
+    // for - an anonymous device id, or an account id for signed-in web/dashboard users.
+    const ownerId = object.metadata?.device_id;
     const email = object.customer_details?.email || object.customer_email || null;
-    if (deviceId) {
+    if (ownerId) {
       db.prepare(
         `INSERT INTO users (id, email, plan, generations_used, period_start, stripe_customer_id, stripe_subscription_id, created_at)
          VALUES (?, ?, 'pro', 0, ?, ?, ?, ?)
@@ -42,7 +46,7 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
            email = COALESCE(excluded.email, users.email),
            stripe_customer_id = excluded.stripe_customer_id,
            stripe_subscription_id = excluded.stripe_subscription_id`
-      ).run(deviceId, email, nowIso(), object.customer, object.subscription, nowIso());
+      ).run(ownerId, email, nowIso(), object.customer, object.subscription, nowIso());
     }
   }
 
@@ -127,23 +131,140 @@ function getCachedMatchScore(userId, jobText) {
   return row ? row.score : null;
 }
 
-// ---- Authenticated (device-id) API - no accounts, no sign-in ----
+// A device is anonymous (owner id = its own device id) until it's linked to an
+// account (Google Sign-In), at which point the account becomes the owner of
+// everything that device reads and writes - resumes, generations, quota, all of it.
+function resolveOwnerId(deviceId) {
+  const device = db.prepare('SELECT account_id FROM devices WHERE device_id = ?').get(deviceId);
+  return device?.account_id || deviceId;
+}
+
+function getOrCreateAccount(profile) {
+  const existing = db.prepare('SELECT * FROM accounts WHERE google_sub = ?').get(profile.sub);
+  if (existing) {
+    const email = profile.email || existing.email;
+    const name = profile.name || existing.name;
+    const pictureUrl = profile.picture || existing.picture_url;
+    db.prepare('UPDATE accounts SET email = ?, name = ?, picture_url = ? WHERE id = ?').run(email, name, pictureUrl, existing.id);
+    return { ...existing, email, name, picture_url: pictureUrl };
+  }
+
+  const account = {
+    id: uuid(),
+    google_sub: profile.sub,
+    email: profile.email || '',
+    name: profile.name || '',
+    picture_url: profile.picture || '',
+    created_at: nowIso()
+  };
+  db.prepare(
+    'INSERT INTO accounts (id, google_sub, email, name, picture_url, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(account.id, account.google_sub, account.email, account.name, account.picture_url, account.created_at);
+  return account;
+}
+
+// One-time data promotion: the FIRST device ever linked to a fresh account inherits
+// that device's existing resume/generations/quota history (simple rename of the owner
+// key - safe because these tables have no enforced foreign keys). If the account
+// already has its own data (e.g. a second device, or the account signed in on the
+// website first), this device's older anonymous data is left behind rather than
+// risking an ambiguous merge; the account's existing data wins going forward.
+function linkDeviceToAccount(linkToken, account) {
+  const link = db.prepare("SELECT * FROM device_links WHERE token = ? AND status = 'pending'").get(linkToken);
+  if (!link || new Date(link.expires_at) < new Date()) return null;
+
+  const deviceId = link.device_id;
+  const existingAccountUser = db.prepare('SELECT * FROM users WHERE id = ?').get(account.id);
+  const deviceUser = db.prepare('SELECT * FROM users WHERE id = ?').get(deviceId);
+
+  if (deviceUser && !existingAccountUser) {
+    db.prepare('UPDATE users SET id = ? WHERE id = ?').run(account.id, deviceId);
+    db.prepare('UPDATE resumes SET user_id = ? WHERE user_id = ?').run(account.id, deviceId);
+    db.prepare('UPDATE generations SET user_id = ? WHERE user_id = ?').run(account.id, deviceId);
+    db.prepare('UPDATE match_checks SET user_id = ? WHERE user_id = ?').run(account.id, deviceId);
+  }
+
+  db.prepare(
+    `INSERT INTO devices (device_id, account_id, linked_at) VALUES (?, ?, ?)
+     ON CONFLICT(device_id) DO UPDATE SET account_id = excluded.account_id, linked_at = excluded.linked_at`
+  ).run(deviceId, account.id, nowIso());
+
+  db.prepare("UPDATE device_links SET status = 'consumed', account_email = ? WHERE token = ?").run(account.email, linkToken);
+  return deviceId;
+}
+
+// ---- Google Sign-In (used by both the website and the extension's "sync" flow) ----
+
+app.get('/auth/google/start', (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID) return res.status(500).send(errorPage('Google Sign-In is not configured yet.'));
+
+  const redirect = String(req.query.redirect || `${process.env.PUBLIC_WEB_URL || process.env.PUBLIC_BASE_URL}/dashboard`);
+  const linkToken = req.query.linkToken ? String(req.query.linkToken) : null;
+  const state = uuid();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+  db.prepare('INSERT INTO oauth_states (state, redirect_uri, link_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .run(state, redirect, linkToken, nowIso(), expiresAt);
+
+  const googleUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  googleUrl.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID);
+  googleUrl.searchParams.set('redirect_uri', `${process.env.PUBLIC_BASE_URL}/auth/google/callback`);
+  googleUrl.searchParams.set('response_type', 'code');
+  googleUrl.searchParams.set('scope', 'openid email profile');
+  googleUrl.searchParams.set('state', state);
+  googleUrl.searchParams.set('prompt', 'select_account');
+  res.redirect(googleUrl.toString());
+});
+
+app.get('/auth/google/callback', asyncRoute(async (req, res) => {
+  const { code, state, error: googleError } = req.query;
+  const stateRow = state ? db.prepare('SELECT * FROM oauth_states WHERE state = ?').get(String(state)) : null;
+  if (stateRow) db.prepare('DELETE FROM oauth_states WHERE state = ?').run(String(state)); // one-time use
+
+  if (googleError) return res.status(400).send(errorPage('Google sign-in was cancelled.'));
+  if (!stateRow || new Date(stateRow.expires_at) < new Date()) {
+    return res.status(400).send(errorPage('This sign-in link expired. Please try again from the extension or website.'));
+  }
+  if (!code) return res.status(400).send(errorPage('Google did not return a sign-in code.'));
+
+  const tokens = await exchangeCodeForTokens({
+    code: String(code),
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri: `${process.env.PUBLIC_BASE_URL}/auth/google/callback`
+  });
+  const profile = await verifyGoogleIdToken(tokens.id_token, process.env.GOOGLE_CLIENT_ID);
+  const account = getOrCreateAccount(profile);
+
+  if (stateRow.link_token) {
+    linkDeviceToAccount(stateRow.link_token, account);
+    return res.send(deviceConnectedPage(account.email));
+  }
+
+  const sessionToken = await signToken({ aid: account.id }, process.env.AUTH_SECRET, 60 * 60 * 24 * 30);
+  const redirectUrl = new URL(stateRow.redirect_uri);
+  redirectUrl.hash = `token=${sessionToken}`;
+  res.redirect(redirectUrl.toString());
+}));
+
+// ---- Authenticated (device-id) API - used by the extension, no sign-in required ----
 
 const authed = express.Router();
 authed.use(deviceAuth);
 
 authed.get('/me', (req, res) => {
-  res.json(userSummary(getOrCreateUser(req.deviceId)));
+  res.json(userSummary(getOrCreateUser(resolveOwnerId(req.deviceId))));
 });
 
 // Everything the popup needs to restore itself when reopened: plan, stored resume,
 // and the most recent generation (with match scores) so nothing "goes away".
 authed.get('/state', (req, res) => {
-  const user = getOrCreateUser(req.deviceId);
-  const resumeRow = db.prepare('SELECT filename, updated_at FROM resumes WHERE user_id = ?').get(req.deviceId);
+  const ownerId = resolveOwnerId(req.deviceId);
+  const user = getOrCreateUser(ownerId);
+  const resumeRow = db.prepare('SELECT filename, updated_at FROM resumes WHERE user_id = ?').get(ownerId);
   const generation = db.prepare(
     'SELECT id, job_title, job_url, current_text, match_before, match_after, updated_at FROM generations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1'
-  ).get(req.deviceId);
+  ).get(ownerId);
 
   res.json({
     user: userSummary(user),
@@ -163,7 +284,8 @@ authed.get('/state', (req, res) => {
 });
 
 authed.post('/resume', (req, res) => {
-  getOrCreateUser(req.deviceId);
+  const ownerId = resolveOwnerId(req.deviceId);
+  getOrCreateUser(ownerId);
   const text = String(req.body.resumeText || '').trim();
   const filename = String(req.body.filename || 'resume').slice(0, 200);
   if (!text) return res.status(400).json({ error: 'resumeText is required.' });
@@ -171,21 +293,22 @@ authed.post('/resume', (req, res) => {
   db.prepare(
     `INSERT INTO resumes (user_id, filename, resume_text, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET filename = excluded.filename, resume_text = excluded.resume_text, updated_at = excluded.updated_at`
-  ).run(req.deviceId, filename, text, nowIso());
+  ).run(ownerId, filename, text, nowIso());
 
   // A different resume invalidates every cached check score.
-  db.prepare('DELETE FROM match_checks WHERE user_id = ?').run(req.deviceId);
+  db.prepare('DELETE FROM match_checks WHERE user_id = ?').run(ownerId);
 
   res.json({ ok: true });
 });
 
 authed.post('/generate', asyncRoute(async (req, res) => {
-  const user = getOrCreateUser(req.deviceId);
+  const ownerId = resolveOwnerId(req.deviceId);
+  const user = getOrCreateUser(ownerId);
   if (user.generations_used >= planLimit(user.plan)) {
     return res.status(402).json({ error: quotaExceededError(user), quota: userSummary(user) });
   }
 
-  const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(req.deviceId);
+  const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(ownerId);
   if (!resumeRow) return res.status(400).json({ error: 'Upload a resume first.' });
 
   const job = { title: req.body.jobTitle || '', url: req.body.jobUrl || '', text: req.body.jobText || '' };
@@ -196,11 +319,11 @@ authed.post('/generate', asyncRoute(async (req, res) => {
   // Single source of truth for the before-score: reuse the cached Check-match result
   // for this exact job, or run the same score-only pass now. The tailoring call is
   // then anchored to it, so Check match and Generate can never disagree.
-  let anchoredBefore = getCachedMatchScore(req.deviceId, job.text);
+  let anchoredBefore = getCachedMatchScore(ownerId, job.text);
   if (anchoredBefore == null) {
     const check = await scoreMatch(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY);
     anchoredBefore = check.match;
-    saveMatchCheck(req.deviceId, job.text, anchoredBefore);
+    saveMatchCheck(ownerId, job.text, anchoredBefore);
   }
 
   const result = await tailorResume(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY, intensity, anchoredBefore);
@@ -211,9 +334,9 @@ authed.post('/generate', asyncRoute(async (req, res) => {
   const timestamp = nowIso();
   db.prepare(
     'INSERT INTO generations (id, user_id, job_title, job_url, job_text, current_text, match_before, match_after, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(generationId, req.deviceId, job.title, job.url, job.text.slice(0, 20000), result.text, matchBefore, matchAfter, timestamp, timestamp);
+  ).run(generationId, ownerId, job.title, job.url, job.text.slice(0, 20000), result.text, matchBefore, matchAfter, timestamp, timestamp);
 
-  db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(req.deviceId);
+  db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(ownerId);
   const updatedUser = { ...user, generations_used: user.generations_used + 1 };
 
   res.json({
@@ -227,16 +350,17 @@ authed.post('/generate', asyncRoute(async (req, res) => {
 
 // Score-only check: one Claude call, no rewriting, nothing stored, no quota used.
 authed.post('/match', asyncRoute(async (req, res) => {
-  getOrCreateUser(req.deviceId);
+  const ownerId = resolveOwnerId(req.deviceId);
+  getOrCreateUser(ownerId);
 
-  const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(req.deviceId);
+  const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(ownerId);
   if (!resumeRow) return res.status(400).json({ error: 'Upload a resume first.' });
 
   const job = { title: req.body.jobTitle || '', url: req.body.jobUrl || '', text: req.body.jobText || '' };
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
 
   const result = await scoreMatch(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY);
-  saveMatchCheck(req.deviceId, job.text, result.match);
+  saveMatchCheck(ownerId, job.text, result.match);
 
   res.json({
     match: result.match,
@@ -247,12 +371,13 @@ authed.post('/match', asyncRoute(async (req, res) => {
 }));
 
 authed.post('/revise', asyncRoute(async (req, res) => {
-  const user = getOrCreateUser(req.deviceId);
+  const ownerId = resolveOwnerId(req.deviceId);
+  getOrCreateUser(ownerId);
   const generationId = String(req.body.generationId || '');
   const instruction = String(req.body.instruction || '').trim();
   if (!instruction) return res.status(400).json({ error: 'instruction is required.' });
 
-  const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, req.deviceId);
+  const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, ownerId);
   if (!generation) return res.status(404).json({ error: 'Generation not found.' });
 
   const result = await reviseResume(generation.current_text, instruction, generation.job_text || '', process.env.ANTHROPIC_API_KEY);
@@ -273,13 +398,14 @@ authed.post('/revise', asyncRoute(async (req, res) => {
 }));
 
 authed.post('/boost', asyncRoute(async (req, res) => {
-  const user = getOrCreateUser(req.deviceId);
+  const ownerId = resolveOwnerId(req.deviceId);
+  const user = getOrCreateUser(ownerId);
   if (user.generations_used >= planLimit(user.plan)) {
     return res.status(402).json({ error: quotaExceededError(user), quota: userSummary(user) });
   }
   const generationId = String(req.body.generationId || '');
 
-  const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, req.deviceId);
+  const generation = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(generationId, ownerId);
   if (!generation) return res.status(404).json({ error: 'Generation not found.' });
 
   const previousAfter = generation.match_after;
@@ -293,7 +419,7 @@ authed.post('/boost', asyncRoute(async (req, res) => {
   db.prepare('INSERT INTO revisions (id, generation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(uuid(), generationId, 'assistant', result.summary, timestamp);
 
-  db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(req.deviceId);
+  db.prepare('UPDATE users SET generations_used = generations_used + 1 WHERE id = ?').run(ownerId);
   const updatedUser = { ...user, generations_used: user.generations_used + 1 };
 
   res.json({
@@ -305,7 +431,8 @@ authed.post('/boost', asyncRoute(async (req, res) => {
 }));
 
 authed.post('/checkout', asyncRoute(async (req, res) => {
-  const user = getOrCreateUser(req.deviceId);
+  const ownerId = resolveOwnerId(req.deviceId);
+  const user = getOrCreateUser(ownerId);
 
   const successUrl = req.body?.successUrl || `${process.env.PUBLIC_BASE_URL}/billing/success`;
   const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_BASE_URL}/billing/cancel`;
@@ -318,7 +445,85 @@ authed.post('/checkout', asyncRoute(async (req, res) => {
   }
 }));
 
+// Device-code style handshake: the extension gets a link to open in a new tab (Google
+// Sign-In happens there, never inside the extension popup), then polls until the
+// device has been linked to an account.
+authed.post('/link/start', (req, res) => {
+  const token = uuid();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  db.prepare('INSERT INTO device_links (token, device_id, status, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .run(token, req.deviceId, 'pending', nowIso(), expiresAt);
+
+  const webBase = process.env.PUBLIC_WEB_URL || process.env.PUBLIC_BASE_URL;
+  const linkUrl = `${process.env.PUBLIC_BASE_URL}/auth/google/start?linkToken=${token}&redirect=${encodeURIComponent(`${webBase}/connected`)}`;
+  res.json({ token, linkUrl, expiresAt });
+});
+
+authed.get('/link/status', (req, res) => {
+  const token = String(req.query.token || '');
+  const link = db.prepare('SELECT * FROM device_links WHERE token = ?').get(token);
+  if (!link) return res.status(404).json({ error: 'Unknown link request.' });
+  res.json({ status: link.status, email: link.account_email || null });
+});
+
 app.use('/api', authed);
+
+// ---- Account API (website dashboard) - Google session, not device id ----
+
+const account = express.Router();
+account.use(accountAuth);
+
+account.get('/me', (req, res) => {
+  const user = getOrCreateUser(req.accountId);
+  const acct = db.prepare('SELECT email, name, picture_url FROM accounts WHERE id = ?').get(req.accountId);
+  res.json({ ...userSummary(user), email: acct?.email, name: acct?.name, pictureUrl: acct?.picture_url });
+});
+
+// Every tailored resume the account owns, most recent first - the dashboard's list.
+account.get('/resumes', (req, res) => {
+  const rows = db.prepare(
+    'SELECT id, job_title, job_url, match_before, match_after, created_at, updated_at FROM generations WHERE user_id = ? ORDER BY updated_at DESC'
+  ).all(req.accountId);
+  res.json(rows.map((row) => ({
+    id: row.id,
+    jobTitle: row.job_title,
+    jobUrl: row.job_url,
+    matchBefore: row.match_before,
+    matchAfter: row.match_after,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })));
+});
+
+account.get('/resumes/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM generations WHERE id = ? AND user_id = ?').get(req.params.id, req.accountId);
+  if (!row) return res.status(404).json({ error: 'Resume not found.' });
+  res.json({
+    id: row.id,
+    jobTitle: row.job_title,
+    jobUrl: row.job_url,
+    text: row.current_text,
+    matchBefore: row.match_before,
+    matchAfter: row.match_after,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  });
+});
+
+account.post('/checkout', asyncRoute(async (req, res) => {
+  const user = getOrCreateUser(req.accountId);
+  const successUrl = req.body?.successUrl || `${process.env.PUBLIC_WEB_URL}/dashboard?upgraded=1`;
+  const cancelUrl = req.body?.cancelUrl || `${process.env.PUBLIC_WEB_URL}/dashboard`;
+
+  try {
+    const session = await createCheckoutSession(process.env, user, successUrl, cancelUrl);
+    res.json({ url: session.url });
+  } catch (checkoutError) {
+    res.status(500).json({ error: checkoutError.message });
+  }
+}));
+
+app.use('/account', account);
 
 app.get('/billing/success', (req, res) => res.send('<h1>Payment successful</h1><p>Go back to the extension - your plan will update within a few seconds.</p>'));
 app.get('/billing/cancel', (req, res) => res.send('<h1>Checkout canceled</h1><p>No charge was made. You can close this tab.</p>'));

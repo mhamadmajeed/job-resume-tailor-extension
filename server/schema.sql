@@ -45,5 +45,45 @@ CREATE TABLE IF NOT EXISTS match_checks (
   PRIMARY KEY (user_id, job_hash)
 );
 
+-- A real, cross-device identity (Google Sign-In). "users.id" (the owner key for
+-- resumes/generations/quota) is either a device_id (anonymous, extension-only) or an
+-- account_id once a device has been linked to one - see resolveOwnerId in index.js.
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  google_sub TEXT UNIQUE NOT NULL,
+  email TEXT,
+  name TEXT,
+  picture_url TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- Maps an extension install (device_id) to the account it has been linked to, if any.
+CREATE TABLE IF NOT EXISTS devices (
+  device_id TEXT PRIMARY KEY,
+  account_id TEXT REFERENCES accounts(id),
+  linked_at TEXT
+);
+
+-- Short-lived device-code-style handshake so the extension can link to an account
+-- without ever handling the OAuth redirect itself.
+CREATE TABLE IF NOT EXISTS device_links (
+  token TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  account_email TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+-- CSRF state for the Google OAuth roundtrip; also carries where to redirect back to
+-- and an optional device_links token, since Google only echoes back one opaque string.
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state TEXT PRIMARY KEY,
+  redirect_uri TEXT NOT NULL,
+  link_token TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_generations_user ON generations(user_id);
 CREATE INDEX IF NOT EXISTS idx_revisions_generation ON revisions(generation_id);

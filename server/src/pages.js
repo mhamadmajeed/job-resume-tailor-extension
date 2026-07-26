@@ -49,6 +49,17 @@ export function confirmedPage() {
 </body></html>`;
 }
 
+export function deviceConnectedPage(email) {
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Connected</title><style>${SHELL_STYLE}</style></head>
+<body>
+  <div class="card">
+    <h1>Extension connected</h1>
+    <p>Signed in as <strong>${email || 'your Google account'}</strong>. Return to the extension popup - it will pick this up automatically.</p>
+  </div>
+</body></html>`;
+}
+
 export function errorPage(message) {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Error</title><style>${SHELL_STYLE}</style></head>
