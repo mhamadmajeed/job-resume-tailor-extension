@@ -1,4 +1,4 @@
-// Resume Tailor - admin panel.
+// ResumePilot - admin panel.
 // Served at /admin by the same Express server that hosts the API, so every
 // fetch below uses a relative path (same origin, no API base to configure).
 

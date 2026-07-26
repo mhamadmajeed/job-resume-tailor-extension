@@ -101,8 +101,8 @@ function pageShell({ title, description, bodyHtml }) {
     <header class="site-header">
       <div class="container nav">
         <a class="brand" href="/">
-          <span class="logo" aria-hidden="true">RT</span>
-          <span class="wordmark">Resume Tailor</span>
+          <span class="logo" aria-hidden="true">RP</span>
+          <span class="wordmark">ResumePilot</span>
         </a>
         <nav class="nav-links" aria-label="Primary">
           <a href="/">Home</a>
@@ -136,8 +136,8 @@ function blogListPage(posts) {
     </article>`).join('');
 
   return pageShell({
-    title: 'Blog - Resume Tailor',
-    description: 'Resume writing and job search advice from Resume Tailor.',
+    title: 'Blog - ResumePilot',
+    description: 'Resume writing and job search advice from ResumePilot.',
     bodyHtml: `
       <div class="section-head" style="text-align:left;max-width:none;margin-bottom:32px;">
         <h2>Blog</h2>
@@ -148,7 +148,7 @@ function blogListPage(posts) {
 
 function blogArticlePage(post) {
   return pageShell({
-    title: `${post.title} - Resume Tailor Blog`,
+    title: `${post.title} - ResumePilot Blog`,
     description: post.excerpt || '',
     bodyHtml: `
       <div style="max-width:720px;margin:0 auto;">
@@ -162,7 +162,7 @@ function blogArticlePage(post) {
 
 function blogNotFoundPage() {
   return pageShell({
-    title: 'Post not found - Resume Tailor Blog',
+    title: 'Post not found - ResumePilot Blog',
     bodyHtml: `
       <div style="max-width:720px;margin:0 auto;text-align:center;">
         <h2>Post not found</h2>

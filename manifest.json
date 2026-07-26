@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Job Resume Tailor",
+  "name": "ResumePilot",
   "description": "Locally tailors a stored resume draft to keywords found on job listing pages.",
   "version": "2.0.0",
   "permissions": [
@@ -13,7 +13,8 @@
   ],
   "host_permissions": [
     "http://localhost:8787/*",
-    "https://*.up.railway.app/*"
+    "https://*.up.railway.app/*",
+    "https://resumepilot.co/*"
   ],
   "action": {
     "default_title": "Tailor resume",

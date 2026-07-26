@@ -1,4 +1,4 @@
-# Job Resume Tailor — Backend
+# ResumePilot — Backend
 
 Plain Node.js + Express backend for the extension. Holds the Claude API key server-side, stores
 each user's resume and generation history, enforces free/pro quotas, and handles Stripe billing.

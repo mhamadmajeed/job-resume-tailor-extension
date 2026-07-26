@@ -58,7 +58,7 @@ function progressHide(delayMs = 1200) {
 
 // Watermarks are gone entirely - free vs pro is now a monthly generation quota.
 // stripWatermark stays as a harmless cleaner for any legacy stored text.
-const WATERMARK_MARKER = 'Made with Job Resume Tailor';
+const WATERMARK_MARKER = 'Made with ResumePilot';
 
 function stripWatermark(text) {
   const idx = text.lastIndexOf(WATERMARK_MARKER);

@@ -1,4 +1,4 @@
-# Job Resume Tailor
+# ResumePilot
 
 A Chrome extension + Cloudflare Worker backend. Upload a resume once, generate a version tailored to
 the job listing you're viewing, refine it with a chat prompt, and download it as PDF or DOCX.

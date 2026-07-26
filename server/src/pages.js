@@ -11,10 +11,10 @@ const SHELL_STYLE = `
 
 export function emailFormPage(sessionId, error) {
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Sign in - Job Resume Tailor</title><style>${SHELL_STYLE}</style></head>
+<html><head><meta charset="utf-8"><title>Sign in - ResumePilot</title><style>${SHELL_STYLE}</style></head>
 <body>
   <div class="card">
-    <h1>Sign in to Job Resume Tailor</h1>
+    <h1>Sign in to ResumePilot</h1>
     <p>Enter your email and we'll send a sign-in link.</p>
     ${error ? `<p style="color:#ff8080">${error}</p>` : ''}
     <form method="POST" action="/auth/send-link">
@@ -44,7 +44,7 @@ export function confirmedPage() {
 <body>
   <div class="card">
     <h1>You're signed in</h1>
-    <p>Return to the Job Resume Tailor extension popup — it will pick this up automatically.</p>
+    <p>Return to the ResumePilot extension popup — it will pick this up automatically.</p>
   </div>
 </body></html>`;
 }

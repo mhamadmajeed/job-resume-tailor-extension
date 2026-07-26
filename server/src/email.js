@@ -11,10 +11,10 @@ export async function sendMagicLinkEmail(env, email, link) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      from: env.EMAIL_FROM || 'Job Resume Tailor <onboarding@resend.dev>',
+      from: env.EMAIL_FROM || 'ResumePilot <onboarding@resend.dev>',
       to: [email],
       subject: 'Your sign-in link',
-      html: `<p>Click to sign in to Job Resume Tailor:</p><p><a href="${link}">${link}</a></p><p>This link expires in 15 minutes.</p>`
+      html: `<p>Click to sign in to ResumePilot:</p><p><a href="${link}">${link}</a></p><p>This link expires in 15 minutes.</p>`
     })
   });
 
@@ -45,7 +45,7 @@ export async function sendEmail(env, { to, subject, text }) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: env.EMAIL_FROM || 'Resume Tailor <onboarding@resend.dev>',
+        from: env.EMAIL_FROM || 'ResumePilot <onboarding@resend.dev>',
         to: [to],
         subject,
         text: text || ''

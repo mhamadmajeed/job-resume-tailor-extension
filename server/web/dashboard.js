@@ -1,4 +1,4 @@
-// Resume Tailor - signed-in dashboard.
+// ResumePilot - signed-in dashboard.
 // Served at /dashboard by the same Express server that hosts the API, so every
 // fetch below uses a relative path (same origin, no API base to configure).
 

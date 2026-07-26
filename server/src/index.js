@@ -636,5 +636,5 @@ app.get('/dashboard', (req, res) => res.sendFile(path.join(WEB_DIR, 'dashboard.h
 app.use((req, res) => res.status(404).json({ error: 'Not found.' }));
 
 app.listen(PORT, () => {
-  console.log(`Job Resume Tailor server listening on http://localhost:${PORT}`);
+  console.log(`ResumePilot server listening on http://localhost:${PORT}`);
 });
