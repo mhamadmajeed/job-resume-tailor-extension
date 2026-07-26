@@ -8,6 +8,13 @@ CREATE TABLE IF NOT EXISTS users (
   plan TEXT NOT NULL DEFAULT 'free',
   generations_used INTEGER NOT NULL DEFAULT 0,
   credits_used INTEGER NOT NULL DEFAULT 0,
+  -- match_checks_used is the FREE plan's check-match counter for the current 30-day
+  -- period; it resets alongside generations_used. match_checks_today/match_checks_day
+  -- are the paid plans' counter for the UTC calendar day stored in match_checks_day
+  -- ('YYYY-MM-DD'); a stale day means the count is effectively 0.
+  match_checks_used INTEGER NOT NULL DEFAULT 0,
+  match_checks_today INTEGER NOT NULL DEFAULT 0,
+  match_checks_day TEXT NULL,
   period_start TEXT NOT NULL,
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
@@ -180,12 +187,15 @@ CREATE INDEX IF NOT EXISTS idx_visitor_offers_visitor ON visitor_offers(visitor_
 -- 'free' (the free plan is quota-based, not credit-based), 200 for 'pro', 500 for
 -- 'elite' by default. Monthly and yearly billing grant the same monthly pool.
 -- generation_limit still governs the FREE plan's tailored resumes per 30-day period.
+-- match_limit caps check-match uses: per 30-day period on 'free', per UTC calendar
+-- day on 'pro'/'elite'. Admin-editable in the Plans tab; check-match never costs credits.
 CREATE TABLE IF NOT EXISTS plan_settings (
   plan TEXT PRIMARY KEY,
   price_usd REAL NOT NULL DEFAULT 0,
   price_usd_yearly REAL,
   generation_limit INTEGER NOT NULL,
   credits_monthly INTEGER,
+  match_limit INTEGER,
   stripe_product_id TEXT,
   stripe_price_id TEXT,
   stripe_price_id_yearly TEXT,

@@ -63,13 +63,14 @@ app.post('/webhook/stripe', express.raw({ type: 'application/json' }), asyncRout
       // Resetting the quota window is safe here: this event only fires after payment.
       // Credits reset alongside it so a fresh subscription starts with a full pool.
       db.prepare(
-        `INSERT INTO users (id, email, plan, generations_used, credits_used, period_start, stripe_customer_id, stripe_subscription_id, created_at)
-         VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)
+        `INSERT INTO users (id, email, plan, generations_used, credits_used, match_checks_used, period_start, stripe_customer_id, stripe_subscription_id, created_at)
+         VALUES (?, ?, ?, 0, 0, 0, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            plan = excluded.plan,
            email = COALESCE(excluded.email, users.email),
            generations_used = 0,
            credits_used = 0,
+           match_checks_used = 0,
            period_start = excluded.period_start,
            stripe_customer_id = excluded.stripe_customer_id,
            stripe_subscription_id = excluded.stripe_subscription_id`
@@ -126,6 +127,13 @@ function planCredits(plan) {
   return getPlanSettings(plan).credits_monthly;
 }
 
+// Match-check allowance, admin-editable via plan_settings.match_limit. The meaning
+// differs by plan: per 30-day period on free, per UTC day on paid. The literals are
+// only a fallback if the column ever goes missing; the DB row wins.
+function planMatchLimit(plan) {
+  return getPlanSettings(plan).match_limit ?? (plan === 'free' ? 5 : 20);
+}
+
 // Per-use credit prices, admin-editable via the credit_costs table. The literals
 // here are only a fallback if a seed row ever goes missing; the DB rows win.
 // Check-match has no row on purpose: it is always free and not configurable.
@@ -173,15 +181,16 @@ async function resolveCheckoutPriceId(plan, cycle) {
 // checks the plan itself at the top, before any Claude call. The free plan still
 // hears no money talk until its allowance is actually used up.
 
-// Rolls the 30-day usage window for every plan, resetting both counters when a new
-// period starts.
+// Rolls the 30-day usage window for every plan, resetting the period counters when
+// a new period starts. The daily match-check pair is left alone on purpose - it
+// resets by the calendar day, not the billing period.
 function refreshQuotaPeriod(user) {
   const daysElapsed = (Date.now() - new Date(user.period_start).getTime()) / (1000 * 60 * 60 * 24);
   if (daysElapsed < PERIOD_DAYS) return user;
 
   const period_start = nowIso();
-  db.prepare('UPDATE users SET generations_used = 0, credits_used = 0, period_start = ? WHERE id = ?').run(period_start, user.id);
-  return { ...user, generations_used: 0, credits_used: 0, period_start };
+  db.prepare('UPDATE users SET generations_used = 0, credits_used = 0, match_checks_used = 0, period_start = ? WHERE id = ?').run(period_start, user.id);
+  return { ...user, generations_used: 0, credits_used: 0, match_checks_used: 0, period_start };
 }
 
 function userSummary(user) {
@@ -189,6 +198,12 @@ function userSummary(user) {
   const limit = planLimit(user.plan);
   const creditsTotal = planCredits(user.plan) ?? 0;
   const creditsUsed = user.credits_used || 0;
+  const matchLimit = planMatchLimit(user.plan);
+  // Paid plans count match checks per UTC day, so a stored count from an earlier
+  // day reads as zero. Free plans count them across the 30-day period.
+  const matchUsed = isPro
+    ? (user.match_checks_day === nowIso().slice(0, 10) ? user.match_checks_today || 0 : 0)
+    : user.match_checks_used || 0;
   return {
     plan: user.plan,
     tier: user.plan,
@@ -199,6 +214,12 @@ function userSummary(user) {
     credits: isPro
       ? { used: creditsUsed, total: creditsTotal, remaining: Math.max(0, creditsTotal - creditsUsed) }
       : null,
+    matchChecks: {
+      used: matchUsed,
+      limit: matchLimit,
+      remaining: Math.max(0, matchLimit - matchUsed),
+      window: isPro ? 'day' : 'month'
+    },
     costs: getCreditCosts(),
     features: {
       maxIntensity: true,
@@ -564,9 +585,10 @@ app.get('/api/plans', (req, res) => {
   res.json({
     cycle,
     plans: {
-      free: { price: 0, limit: planLimit('free') },
-      pro: { price: planPrice('pro', cycle), credits: planCredits('pro') },
-      elite: { price: planPrice('elite', cycle), credits: planCredits('elite') }
+      // matchChecks is per month on free and per day on paid - the UI copy carries the unit.
+      free: { price: 0, limit: planLimit('free'), matchChecks: planMatchLimit('free') },
+      pro: { price: planPrice('pro', cycle), credits: planCredits('pro'), matchChecks: planMatchLimit('pro') },
+      elite: { price: planPrice('elite', cycle), credits: planCredits('elite'), matchChecks: planMatchLimit('elite') }
     },
     costs: getCreditCosts()
   });
@@ -733,7 +755,8 @@ authed.post('/generate', requireAccount, rateLimit('generate', 30, 120), asyncRo
   });
 }));
 
-// Score-only check: one Claude call, no rewriting, nothing stored, no quota used.
+// Score-only check: one Claude call, no rewriting, never costs credits. Capped
+// instead: free plans get a per-period allowance, paid plans a per-day one.
 authed.post('/match', requireAccount, rateLimit('match', 40, 200), asyncRoute(async (req, res) => {
   const ownerId = resolveOwnerId(req.deviceId);
   const user = getOrCreateUser(ownerId);
@@ -744,11 +767,39 @@ authed.post('/match', requireAccount, rateLimit('match', 40, 200), asyncRoute(as
   const resumeRow = db.prepare('SELECT * FROM resumes WHERE user_id = ?').get(ownerId);
   if (!resumeRow) return res.status(400).json({ error: 'Upload a resume first.' });
 
+  // Usage cap, checked before any Claude spend. Free counts against the same
+  // 30-day period as generations; paid counts against the current UTC day, so a
+  // stored count from an earlier day reads as zero.
+  const isPaid = user.plan !== 'free';
+  const matchLimit = planMatchLimit(user.plan);
+  const today = nowIso().slice(0, 10);
+  const todayCount = user.match_checks_day === today ? user.match_checks_today || 0 : 0;
+  if (!isPaid && (user.match_checks_used || 0) >= matchLimit) {
+    return res.status(402).json({
+      error: `You have used your ${matchLimit} free match checks for this month. Subscribe to keep checking - paid plans include ${planMatchLimit('pro')} a day.`,
+      quota: userSummary(user)
+    });
+  }
+  if (isPaid && todayCount >= matchLimit) {
+    return res.status(402).json({
+      error: `You have used today's ${matchLimit} match checks. Your limit resets tomorrow.`,
+      quota: userSummary(user)
+    });
+  }
+
   const job = { title: req.body.jobTitle || '', url: req.body.jobUrl || '', text: req.body.jobText || '' };
   if (!job.text.trim()) return res.status(400).json({ error: 'jobText is required.' });
 
   const result = await scoreMatch(resumeRow.resume_text, job, process.env.ANTHROPIC_API_KEY);
   saveMatchCheck(ownerId, job.text, result.match);
+
+  // Count only after the Claude call succeeded, mirroring how credits deduct.
+  if (isPaid) {
+    db.prepare('UPDATE users SET match_checks_today = ?, match_checks_day = ? WHERE id = ?')
+      .run(todayCount + 1, today, ownerId);
+  } else {
+    db.prepare('UPDATE users SET match_checks_used = match_checks_used + 1 WHERE id = ?').run(ownerId);
+  }
 
   res.json({
     match: result.match,

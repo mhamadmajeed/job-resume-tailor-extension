@@ -281,7 +281,7 @@
           <div class="section-head">
             <span class="eyebrow">Pricing</span>
             <h2>Start free. Upgrade when you need more.</h2>
-            <p>Free covers 5 tailored resumes a month at any intensity, plus unlimited match checks. Paid plans give you a monthly credit pool to spend on generating, refining, and boosting.</p>
+            <p>Free covers 5 tailored resumes a month at any intensity, plus free match checks. Paid plans give you a monthly credit pool to spend on generating, refining, and boosting.</p>
           </div>
           <div class="billing-toggle" id="billingToggle" role="group" aria-label="Billing cycle">
             <button type="button" class="cycle-btn active" data-cycle="monthly">Monthly</button>
@@ -301,7 +301,7 @@
               <ul class="price-list">
                 <li data-plan-quota="free">5 tailored resumes / month</li>
                 <li>All four intensities, including Max &amp; Ultra</li>
-                <li>Free match check with keyword gaps</li>
+                <li data-plan-matches="free">5 match checks / month</li>
                 <li>Dashboard sync</li>
               </ul>
               <a class="btn ghost block" href="https://github.com/mhamadmajeed/job-resume-tailor-extension" target="_blank" rel="noopener">Add to Chrome - it's free</a>
@@ -320,6 +320,7 @@
               </div>
               <ul class="price-list">
                 <li data-plan-credits="pro">200 credits / month</li>
+                <li data-plan-matches="pro">20 match checks / day</li>
                 <li>AI refine chat + Boost included</li>
                 <li data-plan-ratio="pro">200 credits to spend your way</li>
               </ul>
@@ -338,6 +339,7 @@
               </div>
               <ul class="price-list">
                 <li data-plan-credits="elite">500 credits / month</li>
+                <li data-plan-matches="elite">20 match checks / day</li>
                 <li>AI refine chat + Boost included</li>
                 <li>Priority support</li>
               </ul>
@@ -461,6 +463,20 @@
             if (!creditsEl || !info) return;
             var credits = info.credits != null ? info.credits : info.limit;
             if (credits) creditsEl.textContent = credits + ' credits / month';
+          });
+
+          // Match checks stay free in credit terms but are capped - per month
+          // on free, per day on paid. Markup text is the no-JS fallback.
+          var freeMatchesEl = document.querySelector('[data-plan-matches="free"]');
+          if (freeMatchesEl && plans.free && plans.free.matchChecks) {
+            freeMatchesEl.textContent = plans.free.matchChecks + ' match checks / month';
+          }
+
+          ['pro', 'elite'].forEach(function (plan) {
+            var matchesEl = document.querySelector('[data-plan-matches="' + plan + '"]');
+            var info = plans[plan];
+            if (!matchesEl || !info) return;
+            if (info.matchChecks) matchesEl.textContent = info.matchChecks + ' match checks / day';
           });
 
           // The old generations ratio no longer applies to paid plans; show

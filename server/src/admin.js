@@ -431,6 +431,7 @@ function mapPlan(row) {
     priceUsdYearly: row.price_usd_yearly,
     generationLimit: row.generation_limit,
     creditsMonthly: row.credits_monthly,
+    matchLimit: row.match_limit,
     stripeProductId: row.stripe_product_id,
     stripePriceId: row.stripe_price_id,
     stripePriceIdYearly: row.stripe_price_id_yearly
@@ -469,6 +470,12 @@ adminRouter.put('/plans/:plan', requireRole('owner'), asyncRoute(async (req, res
     creditsMonthly = nextCredits;
   }
 
+  // Match checks are capped on every plan - per 30-day period on free, per day on paid.
+  const matchLimit = Number(req.body?.matchLimit);
+  if (!Number.isInteger(matchLimit) || matchLimit <= 0) {
+    return res.status(400).json({ error: 'matchLimit must be a positive number.' });
+  }
+
   let priceUsd = existing.price_usd;
   let priceUsdYearly = existing.price_usd_yearly;
   let stripePriceId = existing.stripe_price_id;
@@ -500,9 +507,9 @@ adminRouter.put('/plans/:plan', requireRole('owner'), asyncRoute(async (req, res
 
   db.prepare(
     `UPDATE plan_settings
-     SET price_usd = ?, price_usd_yearly = ?, generation_limit = ?, credits_monthly = ?, stripe_price_id = ?, stripe_price_id_yearly = ?, updated_at = ?
+     SET price_usd = ?, price_usd_yearly = ?, generation_limit = ?, credits_monthly = ?, match_limit = ?, stripe_price_id = ?, stripe_price_id_yearly = ?, updated_at = ?
      WHERE plan = ?`
-  ).run(priceUsd, priceUsdYearly, generationLimit, creditsMonthly, stripePriceId, stripePriceIdYearly, nowIso(), plan);
+  ).run(priceUsd, priceUsdYearly, generationLimit, creditsMonthly, matchLimit, stripePriceId, stripePriceIdYearly, nowIso(), plan);
 
   res.json(mapPlan(db.prepare('SELECT * FROM plan_settings WHERE plan = ?').get(plan)));
 }));

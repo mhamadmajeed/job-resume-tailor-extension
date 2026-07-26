@@ -951,8 +951,9 @@ saveDiscountButton.addEventListener('click', async () => {
 // ---- Plans tab ----
 // Each row is directly editable: price inputs (hidden for free) + Save.
 // The free row edits its generations quota; paid rows edit their monthly
-// credit pool instead. Prices are whole dollars - Stripe checkout charges
-// exactly what's stored here.
+// credit pool instead. Every row also edits its match-check cap: per month
+// on free, per day on paid. Prices are whole dollars - Stripe checkout
+// charges exactly what's stored here.
 
 async function loadPlans() {
   try {
@@ -1048,20 +1049,36 @@ function renderPlanRow(planRow) {
   }
   tr.appendChild(creditsCell);
 
+  const matchCell = document.createElement('td');
+  const matchInput = document.createElement('input');
+  matchInput.className = 'input';
+  matchInput.type = 'number';
+  matchInput.min = '1';
+  matchInput.step = '1';
+  matchInput.style.maxWidth = '110px';
+  matchInput.value = pick(planRow, 'matchLimit', 'match_limit') ?? '';
+  matchCell.appendChild(matchInput);
+  const matchUnit = document.createElement('span');
+  matchUnit.className = 'cell-muted';
+  matchUnit.style.marginLeft = '6px';
+  matchUnit.textContent = isFree ? '/ month' : '/ day';
+  matchCell.appendChild(matchUnit);
+  tr.appendChild(matchCell);
+
   const actionsCell = document.createElement('td');
   actionsCell.className = 'cell-actions';
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'btn primary small';
   saveBtn.textContent = 'Save';
-  saveBtn.addEventListener('click', () => savePlan(plan, { monthlyInput, yearlyInput, quotaInput, creditsInput, saveBtn, isFree }));
+  saveBtn.addEventListener('click', () => savePlan(plan, { monthlyInput, yearlyInput, quotaInput, creditsInput, matchInput, saveBtn, isFree }));
   actionsCell.appendChild(saveBtn);
   tr.appendChild(actionsCell);
 
   return tr;
 }
 
-async function savePlan(plan, { monthlyInput, yearlyInput, quotaInput, creditsInput, saveBtn, isFree }) {
+async function savePlan(plan, { monthlyInput, yearlyInput, quotaInput, creditsInput, matchInput, saveBtn, isFree }) {
   const payload = {};
 
   if (isFree) {
@@ -1094,6 +1111,14 @@ async function savePlan(plan, { monthlyInput, yearlyInput, quotaInput, creditsIn
     }
     payload.creditsMonthly = creditsMonthly;
   }
+
+  // Every plan carries a match-check cap - the server requires it on each PUT.
+  const matchLimit = Number(matchInput.value);
+  if (!matchInput.value.trim() || !Number.isInteger(matchLimit) || matchLimit <= 0) {
+    showToast('Match checks must be a positive whole number.');
+    return;
+  }
+  payload.matchLimit = matchLimit;
 
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving...';
